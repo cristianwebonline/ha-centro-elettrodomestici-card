@@ -1,14 +1,21 @@
 # Centro Elettrodomestici Card
 
-Card **indipendente** per lavastoviglie, forno, frigorifero o congelatore (metti una
-card per ciascuno), con grafica realistica animata, rilevamento fase dal consumo,
-storico e costo. Gira nel browser e legge/comanda le entità via `hass`, quindi non
-dipende da server esterni.
+Card **indipendente** per lavastoviglie, forno, piano a induzione, frigorifero o
+congelatore (metti una card per ciascuno), con grafica realistica animata,
+rilevamento fase dal consumo, storico e costo. Gira nel browser e legge/comanda le
+entità via `hass`, quindi non dipende da server esterni.
 
-- Una card = un elettrodomestico (`kind: lavastoviglie | forno | frigorifero | congelatore`)
-- Grafica **diversa per tipo**: lavastoviglie con porta flat e spie di ciclo, forno con
-  vetro che si illumina di caldo, frigorifero/congelatore a colonna verticale (il
-  congelatore con brina e ❄️)
+- Una card = un elettrodomestico (`kind: lavastoviglie | forno | piano_induzione | frigorifero | congelatore`)
+- Grafica **diversa per tipo**, in stile inox/smart: lavastoviglie con barra di
+  avanzamento, forno da incasso con ventola e vetro che si illumina, piano a
+  induzione con zone di cottura animate, frigorifero Haier a 4 ante (2 sportelli +
+  dispenser acqua + 2 cassetti freezer), congelatore a pozzetto col coperchio che
+  "respira" quando il compressore lavora
+- **Sicurezza**: su frigorifero e congelatore il badge presa è solo un indicatore,
+  MAI un comando — non si spengono per sbaglio dalla dashboard
+- **Dati robusti**: frigo/congelatore non dipendono dai contatori "energia totale"
+  (spesso inaffidabili) — i kWh sono calcolati integrando nel tempo il sensore di
+  potenza, sempre disponibile
 - **Rilevamento fase dal consumo** (soglie regolabili nell'editor):
   - Lavastoviglie: Ferma → Lavaggio/risciacquo → Riscaldamento acqua
   - Forno: Spento → Preriscaldo (primi minuti) → In cottura
