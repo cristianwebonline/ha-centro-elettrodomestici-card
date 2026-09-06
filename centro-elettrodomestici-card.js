@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.2";
+const CEC_VERSION = "2.2.3";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -45,13 +45,19 @@ const CHART_VIEW = Object.assign({}, CONTINUOUS, { stanza: true });
 // Impedisce a librerie tipo "hass-swipe-navigation" di leggere un tocco dentro la
 // card come uno swipe di cambio-vista. Ferma la propagazione del gesto (senza
 // preventDefault): scroll verticale e tap restano normali.
+// hass-swipe-navigation stesso ignora già i gesti dentro <hui-card-edit-mode>
+// (il wrapper che HA mette intorno alle card quando la dashboard è in
+// modifica, per non rubare il drag-and-drop di riordino) — controllando lì
+// dentro NON dobbiamo bloccare nulla noi. Il tentativo precedente (guardare
+// "edit=1" nell'URL) era sbagliato: le dashboard "sections" non cambiano
+// l'URL entrando in modifica, per questo il riordino restava bloccato.
+function cecInEditMode(e) {
+  const path = e.composedPath ? e.composedPath() : [];
+  return path.some(n => n.tagName === "HUI-CARD-EDIT-MODE");
+}
 function stopSwipeNavHijack(el) {
-  // In modalità modifica dashboard (URL con "edit=1") non blocchiamo nulla:
-  // altrimenti l'editor di HA non riceve più il gesto e la card non si può
-  // più trascinare per riordinarla o ridimensionarla.
-  const inEditMode = () => location.search.indexOf("edit=1") !== -1;
   ["touchstart", "touchmove", "touchend", "pointerdown", "pointermove"].forEach(evt =>
-    el.addEventListener(evt, e => { if (!inEditMode()) e.stopPropagation(); }, { passive: true }));
+    el.addEventListener(evt, e => { if (!cecInEditMode(e)) e.stopPropagation(); }, { passive: true }));
 }
 
 // Classifica la fase dal consumo istantaneo (euristica a soglie, non legge il
