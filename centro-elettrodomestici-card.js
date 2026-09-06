@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "1.0.0";
+const CEC_VERSION = "1.1.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -91,6 +91,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
   }
 
   getCardSize() { return 6; }
+  // Dashboard "sections": dichiara che la card è ridimensionabile — HA mostra la
+  // scheda "Layout" nell'editor con le maniglie per allungarla/accorciarla.
+  getLayoutOptions() {
+    return { grid_rows: 6, grid_columns: 4, grid_min_rows: 3, grid_max_rows: 14, grid_min_columns: 2, grid_max_columns: 6 };
+  }
   static getConfigElement() { return document.createElement("centro-elettrodomestici-card-editor"); }
   static getStubConfig() { return JSON.parse(JSON.stringify(CEC_DEFAULTS.lavastoviglie)); }
 
@@ -164,12 +169,24 @@ class CentroElettrodomesticiCard extends HTMLElement {
 
   _isOngoing(cycle) { return (Date.now() - cycle.end.getTime()) < 2 * 3600000; }
 
+  // Se è configurata una foto vera (photo_url), mostra quella; altrimenti il
+  // disegno animato. Badge/LED restano identici in entrambi i casi.
+  _visual() {
+    if (this._cfg.photo_url) {
+      return `<img src="${this._esc(this._cfg.photo_url)}" alt="${this._esc(this._cfg.name)}"
+        style="width:100%;border-radius:16px;display:block;object-fit:cover;max-height:280px"
+        onerror="this.style.display='none'">`;
+    }
+    return this._machineSVG();
+  }
+
   // ---- grafica macchina (diversa per tipo) -----------------------------------
   _machineSVG() {
     const kind = this._cfg.kind;
     if (kind === "lavastoviglie") return this._svgLavastoviglie();
     if (kind === "forno") return this._svgForno();
-    return this._svgColonna(kind); // frigorifero / congelatore
+    if (kind === "frigorifero") return this._svgFrigo2Ante();
+    return this._svgCongelatore();
   }
 
   _svgLavastoviglie() {
@@ -224,6 +241,8 @@ class CentroElettrodomesticiCard extends HTMLElement {
         </radialGradient>
       </defs>
       <rect x="20" y="14" width="160" height="216" rx="12" fill="url(#fo-body)" stroke="#111316" stroke-width="1.5"/>
+      <!-- cornice inox (bordo incasso) -->
+      <rect x="20" y="14" width="160" height="216" rx="12" fill="none" stroke="rgba(200,210,220,.35)" stroke-width="1"/>
       <!-- pannello comandi -->
       <rect x="30" y="22" width="140" height="30" rx="6" fill="#15171b" stroke="#0a0b0d"/>
       <rect x="38" y="30" width="50" height="16" rx="3" fill="#0a0d10"/>
@@ -243,8 +262,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
       <g class="cec-heatwave" data-role="heat">
         ${[60, 100, 140].map((x, i) => `<path class="cec-vapor v${i}" d="M${x},130 q8,-14 0,-28 q-8,-14 0,-28" stroke="rgba(255,190,120,.55)" stroke-width="3" fill="none" stroke-linecap="round"/>`).join("")}
       </g>
-      <!-- maniglia -->
-      <rect x="36" y="182" width="128" height="8" rx="4" fill="#484f58" stroke="#2c3138"/>
+      <!-- riflesso sul vetro -->
+      <path d="M46,72 L70,72 L52,166 L44,166 Z" fill="rgba(255,255,255,.06)"/>
+      <!-- maniglia a tutta larghezza (tipico incasso) -->
+      <rect x="30" y="182" width="140" height="9" rx="4.5" fill="#5a616b" stroke="#2c3138"/>
+      <rect x="30" y="182" width="140" height="3" rx="1.5" fill="rgba(255,255,255,.18)"/>
       <!-- sfiato -->
       <g stroke="#484f58" stroke-width="2"><line x1="70" y1="18" x2="130" y2="18"/></g>
       <!-- piedini -->
@@ -252,31 +274,74 @@ class CentroElettrodomesticiCard extends HTMLElement {
     </svg>`;
   }
 
-  _svgColonna(kind) {
-    const isFrigo = kind === "frigorifero";
-    const accent = isFrigo ? "#47b5ff" : "#8fd6ff";
-    const tint = isFrigo ? "#eef7ff" : "#f2fbff";
+  // Frigorifero a 2 ante — combi classico europeo: piccolo vano freezer sopra,
+  // grande vano frigo sotto, giunto/cerniera visibile a metà, maniglie vicine
+  // al giunto (come nei frigo reali, es. Haier 2 porte).
+  _svgFrigo2Ante() {
+    const accent = "#47b5ff";
+    const seamY = 95; // 10..95 = sportello superiore (freezer), 95..260 = sportello inferiore (frigo)
     return `
     <svg viewBox="0 0 170 270" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="col-body-${kind}" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="${tint}"/><stop offset="1" stop-color="#d7dee6"/>
+        <linearGradient id="fr-body" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#eef4fa"/><stop offset="1" stop-color="#ccd5de"/>
         </linearGradient>
-        <radialGradient id="col-glow-${kind}" cx="0.5" cy="0.5" r="0.5">
+        <linearGradient id="fr-doortop" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fdfeff"/><stop offset="1" stop-color="#dde5ec"/>
+        </linearGradient>
+        <linearGradient id="fr-doorbot" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#f6fafd"/><stop offset="1" stop-color="#ccd6de"/>
+        </linearGradient>
+        <radialGradient id="fr-glow" cx="0.5" cy="0.5" r="0.5">
           <stop offset="0" stop-color="${accent}" stop-opacity=".55"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/>
         </radialGradient>
       </defs>
-      <rect x="15" y="10" width="140" height="250" rx="16" fill="url(#col-body-${kind})" stroke="#c2cbd4" stroke-width="1.5"/>
+      <!-- corpo esterno -->
+      <rect x="14" y="8" width="142" height="254" rx="14" fill="url(#fr-body)" stroke="#b9c4cf" stroke-width="1.5"/>
+      <!-- sportello superiore: freezer -->
+      <rect x="21" y="14" width="128" height="${seamY - 14 - 4}" rx="9" fill="url(#fr-doortop)" stroke="#c2cbd4"/>
+      <!-- display temperatura incassato nel freezer -->
+      <rect x="30" y="20" width="58" height="17" rx="5" fill="#0f1720"/>
+      <text x="59" y="33" text-anchor="middle" font-family="monospace" font-size="10" fill="${accent}" data-role="disp">--°</text>
+      <text x="132" y="33" text-anchor="middle" font-size="14">❄️</text>
+      <!-- maniglia freezer: vicina al giunto -->
+      <rect x="30" y="${seamY - 16}" width="110" height="7" rx="3.5" fill="#dfe6ec" stroke="#bfc9d2"/>
+      <!-- giunto tra le due ante -->
+      <rect x="14" y="${seamY - 3}" width="142" height="6" fill="#aab6c1"/>
+      <rect x="14" y="${seamY - 1}" width="142" height="1.5" fill="#8b98a6" opacity=".6"/>
+      <!-- sportello inferiore: frigo -->
+      <rect x="21" y="${seamY + 3}" width="128" height="${256 - seamY}" rx="9" fill="url(#fr-doorbot)" stroke="#c2cbd4"/>
+      <!-- maniglia frigo: vicina al giunto -->
+      <rect x="30" y="${seamY + 10}" width="110" height="7" rx="3.5" fill="#dfe6ec" stroke="#bfc9d2"/>
+      <!-- riflesso leggero sull'anta grande -->
+      <rect x="30" y="${seamY + 26}" width="35" height="${256 - seamY - 40}" rx="6" fill="rgba(255,255,255,.35)"/>
+      <!-- vano/griglia compressore in basso -->
+      <rect x="28" y="240" width="114" height="10" rx="4" fill="#c9d3dc" stroke="#b3bfc9"/>
+      <g stroke="#8b98a6" stroke-width="1.4"><line x1="36" y1="245" x2="134" y2="245"/></g>
+      <ellipse cx="85" cy="245" rx="62" ry="18" fill="url(#fr-glow)" class="cec-compglow" data-role="compglow" opacity="0"/>
+    </svg>`;
+  }
+
+  // Congelatore verticale — sportello unico, brina nella parte bassa.
+  _svgCongelatore() {
+    const accent = "#8fd6ff";
+    return `
+    <svg viewBox="0 0 170 270" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="cg-body" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#f2fbff"/><stop offset="1" stop-color="#d7dee6"/>
+        </linearGradient>
+        <radialGradient id="cg-glow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stop-color="${accent}" stop-opacity=".55"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <rect x="15" y="10" width="140" height="250" rx="16" fill="url(#cg-body)" stroke="#c2cbd4" stroke-width="1.5"/>
       <rect x="15" y="10" width="140" height="250" rx="16" fill="none" stroke="rgba(255,255,255,.7)" stroke-width="1" opacity=".6"/>
-      <!-- pannello temperatura -->
       <rect x="28" y="22" width="70" height="20" rx="6" fill="#0f1720"/>
       <text x="63" y="37" text-anchor="middle" font-family="monospace" font-size="11" fill="${accent}" data-role="disp">--°</text>
-      ${!isFrigo ? `<text x="122" y="37" text-anchor="middle" font-size="16">❄️</text>` : ""}
-      <!-- maniglia verticale -->
+      <text x="122" y="37" text-anchor="middle" font-size="16">❄️</text>
       <rect x="122" y="60" width="9" height="150" rx="4.5" fill="#dfe6ec" stroke="#bfc9d2"/>
-      <!-- linea porta -->
       <line x1="15" y1="250" x2="155" y2="250" stroke="#c2cbd4" stroke-width="1.5"/>
-      ${!isFrigo ? `
       <!-- brina: puntini/striature nella parte bassa -->
       <g opacity=".55">
         ${Array.from({ length: 14 }).map((_, i) => {
@@ -284,12 +349,10 @@ class CentroElettrodomesticiCard extends HTMLElement {
           const y = 190 + Math.floor(i / 7) * 22;
           return `<circle cx="${x}" cy="${y}" r="${1.4 + (i % 3) * 0.5}" fill="#ffffff"/>`;
         }).join("")}
-      </g>` : ``}
-      <!-- vano/griglia compressore in basso -->
+      </g>
       <rect x="30" y="235" width="110" height="10" rx="4" fill="#c9d3dc" stroke="#b3bfc9"/>
       <g stroke="#8b98a6" stroke-width="1.4"><line x1="38" y1="240" x2="132" y2="240"/></g>
-      <!-- bagliore compressore attivo -->
-      <ellipse cx="85" cy="240" rx="60" ry="18" fill="url(#col-glow-${kind})" class="cec-compglow" data-role="compglow" opacity="0"/>
+      <ellipse cx="85" cy="240" rx="60" ry="18" fill="url(#cg-glow)" class="cec-compglow" data-role="compglow" opacity="0"/>
     </svg>`;
   }
 
@@ -297,9 +360,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
     this.innerHTML = `
     <style>
       .cec{--cec-panel:rgba(30,38,48,.72);--cec-stroke:rgba(255,255,255,.09);--cec-ink:#eaf1f8;--cec-muted:#93a1b0;
-        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--cec-ink);padding:6px}
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--cec-ink);padding:6px;
+        height:100%;display:flex;flex-direction:column}
       .cec *{box-sizing:border-box}
       .cec-machine{background:var(--cec-panel);border:1px solid var(--cec-stroke);border-radius:22px;padding:16px 14px;
+        flex:1;
         display:flex;flex-direction:column;align-items:center;gap:6px;backdrop-filter:blur(14px);
         box-shadow:0 10px 26px rgba(0,0,0,.35);position:relative;overflow:hidden;transition:background-color .6s ease,border-color .6s ease}
       .cec-machine::before{content:"";position:absolute;inset:0;border-radius:22px;pointer-events:none;
@@ -385,7 +450,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
     </style>
     <div class="cec">
       <div class="cec-machine" data-kind="${this._cfg.kind}">
-        <div class="cec-glass-wrap" data-role="tap">${this._machineSVG()}</div>
+        <div class="cec-glass-wrap" data-role="tap">${this._visual()}</div>
         <div class="cec-name">${this._esc(this._cfg.name)}</div>
         <div class="cec-plugbadge" data-role="plugbadge" hidden><span class="dot"></span><span class="lbl">—</span></div>
         <div class="cec-state" data-role="state">—</div>
@@ -584,6 +649,9 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
             <option value="14"${c.storico_giorni == 14 ? " selected" : ""}>14 giorni</option>
             <option value="30"${c.storico_giorni == 30 ? " selected" : ""}>30 giorni</option></select></div>
       </div>
+      <div class="fld"><label>Foto (URL) — opzionale</label>
+        <span class="h">Incolla il link di una foto vera del tuo elettrodomestico per usarla al posto del disegno</span>
+        <input type="text" id="f_photo" placeholder="https://..." value="${(c.photo_url || "").replace(/"/g, "&quot;")}"></div>
       <div class="note">💡 Le soglie sono una STIMA dal consumo istantaneo (non leggono il programma reale). Frigorifero e congelatore mostrano solo il grafico consumi (funzionano in continuo, non a cicli).</div>
     </div>`;
     const on = (id, ev, fn) => { const el = this.querySelector(id); if (el) el.addEventListener(ev, fn); };
@@ -597,6 +665,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_preheat", "change", e => this._set("preriscaldo_min", parseInt(e.target.value) || 10));
     on("#f_price", "change", e => this._set("prezzo_kwh", parseFloat(String(e.target.value).replace(",", ".")) || 0.30));
     on("#f_days", "change", e => this._set("storico_giorni", parseInt(e.target.value) || 14));
+    on("#f_photo", "change", e => this._set("photo_url", e.target.value.trim()));
   }
 }
 customElements.define("centro-elettrodomestici-card-editor", CentroElettrodomesticiCardEditor);
