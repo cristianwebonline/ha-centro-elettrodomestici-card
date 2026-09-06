@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.0.0";
+const CEC_VERSION = "2.1.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -264,8 +264,8 @@ class CentroElettrodomesticiCard extends HTMLElement {
           @keyframes lv-progress-grow{0%{width:0px}100%{width:160px}}
         </style>
         <linearGradient id="lv-steel" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#1e293b"/><stop offset="25%" stop-color="#334155"/>
-          <stop offset="50%" stop-color="#475569"/><stop offset="75%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
+          <stop offset="0%" stop-color="#e4e9ee"/><stop offset="25%" stop-color="#f4f6f8"/>
+          <stop offset="50%" stop-color="#ffffff"/><stop offset="75%" stop-color="#f4f6f8"/><stop offset="100%" stop-color="#c9d1d9"/>
         </linearGradient>
         <linearGradient id="lv-panel" x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
@@ -364,7 +364,8 @@ class CentroElettrodomesticiCard extends HTMLElement {
           <stop offset="0%" stop-color="#334155"/><stop offset="50%" stop-color="#64748b"/><stop offset="100%" stop-color="#1e293b"/>
         </linearGradient>
       </defs>
-      <rect x="0" y="0" width="500" height="400" fill="#0b0f19"/>
+      <!-- piano cucina chiaro attorno al vetro nero, così il piano risalta sullo sfondo scuro della card -->
+      <rect x="0" y="0" width="500" height="400" fill="#d7dce1"/>
       <rect x="45" y="45" width="410" height="310" rx="12" fill="#000000" opacity="0.6"/>
       <rect x="50" y="50" width="400" height="300" rx="10" fill="url(#pi-glass)" stroke="url(#pi-frame)" stroke-width="2.5"/>
       <rect x="52" y="52" width="396" height="296" rx="8" fill="none" stroke="#334155" stroke-width="1"/>
@@ -411,8 +412,8 @@ class CentroElettrodomesticiCard extends HTMLElement {
           @keyframes fr-cool-pulse{0%,100%{opacity:.3}50%{opacity:.8}}
         </style>
         <linearGradient id="fr-steel" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#1e293b"/><stop offset="20%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/>
-          <stop offset="80%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
+          <stop offset="0%" stop-color="#dfe4e9"/><stop offset="20%" stop-color="#eef1f4"/><stop offset="50%" stop-color="#ffffff"/>
+          <stop offset="80%" stop-color="#eef1f4"/><stop offset="100%" stop-color="#c3cbd3"/>
         </linearGradient>
         <linearGradient id="fr-niche" x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stop-color="#020617"/><stop offset="100%" stop-color="#1e293b"/>
@@ -422,7 +423,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
         </linearGradient>
       </defs>
       <rect x="40" y="20" width="320" height="610" rx="16" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="4"/>
-      <text x="200" y="42" fill="#e2e8f0" font-family="-apple-system,sans-serif" font-size="14" font-weight="bold" letter-spacing="4" text-anchor="middle">Haier</text>
+      <text x="200" y="42" fill="#475569" font-family="-apple-system,sans-serif" font-size="14" font-weight="bold" letter-spacing="4" text-anchor="middle">Haier</text>
       <path d="M 46 52 L 197 52 L 197 402 L 46 402 Z" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
       <path d="M 203 52 L 354 52 L 354 402 L 203 402 Z" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
       <line x1="200" y1="52" x2="200" y2="402" stroke="#020617" stroke-width="3"/>
@@ -465,17 +466,17 @@ class CentroElettrodomesticiCard extends HTMLElement {
           @keyframes cg-led-pulse{0%,100%{filter:drop-shadow(0 0 2px #38bdf8);opacity:.85}50%{filter:drop-shadow(0 0 6px #38bdf8);opacity:1}}
         </style>
         <linearGradient id="cg-steel" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#1e293b"/><stop offset="25%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/>
-          <stop offset="75%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
+          <stop offset="0%" stop-color="#e0e5ea"/><stop offset="25%" stop-color="#f0f3f5"/><stop offset="50%" stop-color="#ffffff"/>
+          <stop offset="75%" stop-color="#f0f3f5"/><stop offset="100%" stop-color="#c5cdd5"/>
         </linearGradient>
         <linearGradient id="cg-lid-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/><stop offset="100%" stop-color="#1e293b"/>
+          <stop offset="0%" stop-color="#dfe4e9"/><stop offset="50%" stop-color="#eef1f4"/><stop offset="100%" stop-color="#c9d1d9"/>
         </linearGradient>
       </defs>
       <rect x="65" y="455" width="270" height="15" fill="#000000" opacity="0.6"/>
       <rect x="60" y="60" width="280" height="390" rx="16" fill="url(#cg-steel)" stroke="#334155" stroke-width="3"/>
       <rect x="65" y="113" width="270" height="332" fill="url(#cg-steel)"/>
-      <text x="200" y="145" fill="#f8fafc" font-family="-apple-system,sans-serif" font-size="13" font-weight="bold" letter-spacing="2.5" text-anchor="middle">CONGELATORE</text>
+      <text x="200" y="145" fill="#475569" font-family="-apple-system,sans-serif" font-size="13" font-weight="bold" letter-spacing="2.5" text-anchor="middle">CONGELATORE</text>
       <rect x="150" y="170" width="100" height="32" rx="6" fill="#020617" stroke="#0284c7" stroke-width="1.5"/>
       <text x="200" y="191" fill="#38bdf8" font-family="'Courier New',monospace" font-size="12" font-weight="bold" text-anchor="middle" class="cg-led">-20°C</text>
       <path d="M 75 120 L 160 120 L 325 430 L 240 430 Z" fill="#ffffff" opacity="0.04"/>
