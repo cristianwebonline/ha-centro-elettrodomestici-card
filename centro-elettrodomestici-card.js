@@ -4,16 +4,16 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "1.2.0";
+const CEC_VERSION = "2.0.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
 
 const WD = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
-// lavastoviglie/forno = uso a sessioni (mostra storico cicli); frigo/congelatore =
-// funzionamento continuo (compressore che cicla tutto il giorno: la lista cicli non
-// avrebbe senso, meglio solo il grafico consumo).
-const SHOW_CYCLES = { lavastoviglie: true, forno: true, frigorifero: false, congelatore: false };
+// lavastoviglie/forno/piano_induzione = uso a sessioni (mostra storico cicli);
+// frigo/congelatore = funzionamento continuo (compressore che cicla tutto il
+// giorno: la lista cicli non avrebbe senso, meglio solo il grafico consumo).
+const SHOW_CYCLES = { lavastoviglie: true, forno: true, piano_induzione: true, frigorifero: false, congelatore: false };
 const CONTINUOUS = { frigorifero: true, congelatore: true };
 
 const CEC_DEFAULTS = {
@@ -23,6 +23,9 @@ const CEC_DEFAULTS = {
   forno: { kind: "forno", name: "Forno", power: "sensor.presa_forno_power",
     energy: "sensor.presa_forno_energy", switch: "switch.presa_forno",
     soglia: 15, preriscaldo_min: 10, prezzo_kwh: 0.30, storico_giorni: 14 },
+  piano_induzione: { kind: "piano_induzione", name: "Piano induzione", power: "sensor.cucina_induzione_potenza",
+    energy: "sensor.cucina_induzione_energia", switch: "switch.cucina_induzione",
+    soglia: 15, prezzo_kwh: 0.30, storico_giorni: 14 },
   frigorifero: { kind: "frigorifero", name: "Frigorifero", power: "sensor.frigo_power",
     energy: "sensor.frigo_energy", switch: "switch.frigo_outlet",
     soglia: 15, prezzo_kwh: 0.30, storico_giorni: 14 },
@@ -58,6 +61,7 @@ function classifyPhase(kind, p, cfg, runSince) {
     if (elapsedMin < preheatMin) return { key: "preheat", label: "Preriscaldo" };
     return { key: "cook", label: "In cottura" };
   }
+  if (kind === "piano_induzione") return { key: "cook", label: "In uso" };
   return { key: "cool", label: "Compressore attivo" }; // frigorifero / congelatore
 }
 
@@ -111,21 +115,44 @@ class CentroElettrodomesticiCard extends HTMLElement {
   _dlabel(d) { return `${WD[(d.getDay() + 6) % 7]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`; }
   _esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
-  // ---- storico, ricostruito dallo storico energia (recorder statistics) ----
+  // ---- storico ------------------------------------------------------------
+  // Lavastoviglie/forno/piano induzione: dallo storico energia (recorder
+  // statistics) — sensori normalmente affidabili per un uso a sessioni.
+  // Frigo/congelatore: NON ci fidiamo dei loro contatori "energia totale" —
+  // su questo impianto uno è risultato rotto (salti falsi di migliaia di kWh)
+  // e l'altro senza storico salvato affatto. Calcoliamo invece i kWh
+  // integrando nel tempo il sensore di POTENZA (sempre disponibile e
+  // affidabile), che aggira il problema alla radice.
   async _loadHistory() {
-    if (!this._hass || !this._cfg.energy) { this._hist = null; return; }
+    if (!this._hass) { this._hist = null; return; }
     this._histLoading = true;
     const days = parseInt(this._cfg.storico_giorni) || 14;
     const now = new Date();
     const start = new Date(now.getTime() - days * 86400000);
     try {
-      const res = await this._hass.callWS({
-        type: "recorder/statistics_during_period",
-        start_time: start.toISOString(), end_time: now.toISOString(),
-        statistic_ids: [this._cfg.energy], period: "hour", types: ["change"],
-      });
-      const rows = (res && res[this._cfg.energy]) || [];
-      this._hist = this._computeStats(rows);
+      if (CONTINUOUS[this._cfg.kind]) {
+        if (!this._cfg.power) { this._hist = null; }
+        else {
+          const res = await this._hass.callWS({
+            type: "history/history_during_period",
+            start_time: start.toISOString(), end_time: now.toISOString(),
+            entity_ids: [this._cfg.power], minimal_response: true, no_attributes: true,
+          });
+          const rows = (res && res[this._cfg.power]) || [];
+          this._hist = { cycles: [], daily: this._integratePower(rows) };
+        }
+      } else {
+        if (!this._cfg.energy) { this._hist = null; }
+        else {
+          const res = await this._hass.callWS({
+            type: "recorder/statistics_during_period",
+            start_time: start.toISOString(), end_time: now.toISOString(),
+            statistic_ids: [this._cfg.energy], period: "hour", types: ["change"],
+          });
+          const rows = (res && res[this._cfg.energy]) || [];
+          this._hist = this._computeStats(rows);
+        }
+      }
     } catch (e) {
       this._hist = null;
       console.warn("[centro-elettrodomestici-card] storico non disponibile:", e);
@@ -135,11 +162,38 @@ class CentroElettrodomesticiCard extends HTMLElement {
     this._update();
   }
 
+  // Integra P(t)*dt sui campioni raw dello storico potenza → kWh per giorno.
+  // Ceiling di sicurezza sui watt e sul gap tra due campioni: un sensore che
+  // impazzisce per un istante, o resta offline a lungo, non deve falsare il totale.
+  _integratePower(rows) {
+    const MAX_W = 2500;
+    const MAX_GAP_S = 2 * 3600;
+    const norm = r => r.s !== undefined
+      ? { t: r.lu * 1000, w: parseFloat(r.s) }
+      : { t: new Date(r.last_updated || r.lu).getTime(), w: parseFloat(r.state) };
+    const pts = rows.map(norm).filter(p => !isNaN(p.w) && !isNaN(p.t))
+      .map(p => ({ t: p.t, w: Math.min(MAX_W, Math.max(0, p.w)) }))
+      .sort((a, b) => a.t - b.t);
+    const daily = {};
+    for (let i = 0; i < pts.length - 1; i++) {
+      const dtS = Math.min(MAX_GAP_S, (pts[i + 1].t - pts[i].t) / 1000);
+      if (dtS <= 0) continue;
+      const kwh = (pts[i].w * dtS) / 3600 / 1000;
+      const k = this._dkey(new Date(pts[i].t));
+      daily[k] = (daily[k] || 0) + kwh;
+    }
+    return daily;
+  }
+
   _computeStats(rows) {
     const NOISE = 0.01;
+    const CEIL = 5; // kWh in una sola ora: oltre è quasi certo un glitch del sensore
     const GAP_MERGE_H = 1;
-    const buckets = rows.map(r => ({ t: new Date(r.start), kwh: (r.change && r.change > 0) ? r.change : 0 }))
-      .sort((a, b) => a.t - b.t);
+    const buckets = rows.map(r => {
+      let kwh = (r.change && r.change > 0) ? r.change : 0;
+      if (kwh > CEIL) kwh = 0; // scarta il bucket: dato non plausibile
+      return { t: new Date(r.start), kwh };
+    }).sort((a, b) => a.t - b.t);
     const daily = {};
     for (const b of buckets) { const k = this._dkey(b.t); daily[k] = (daily[k] || 0) + b.kwh; }
     let cycles = [];
@@ -185,174 +239,253 @@ class CentroElettrodomesticiCard extends HTMLElement {
     const kind = this._cfg.kind;
     if (kind === "lavastoviglie") return this._svgLavastoviglie();
     if (kind === "forno") return this._svgForno();
-    if (kind === "frigorifero") return this._svgFrigo2Ante();
-    return this._svgCongelatore();
+    if (kind === "piano_induzione") return this._svgPianoInduzione();
+    if (kind === "frigorifero") return this._svgFrigoHaier();
+    return this._svgCongelatoreChest();
   }
 
+  // Disegni "smart" forniti da Cristian (stile SmartThings/Bespoke, coerente con
+  // lavatrice/asciugatrice del Centro Bucato). Display con dati veri dove sensato
+  // (lavastoviglie/forno/piano induzione: fase reale, non un timer finto); frigo e
+  // congelatore mostrano una temperatura statica decorativa (non tracciamo un
+  // sensore di temperatura reale) — lo stato compressore resta leggibile sotto
+  // l'immagine (.cec-state), non serve duplicarlo dentro il disegno.
+
   _svgLavastoviglie() {
-    const accent = "#47b5ff";
     return `
-    <svg viewBox="0 0 200 250" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 400 500" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="lv-body" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#eef4fa"/><stop offset="1" stop-color="#d7dee6"/>
+        <style>
+          .lv-led{opacity:.3}
+          .cec-machine.plug-on .lv-led{animation:lv-led-pulse 2s ease-in-out infinite}
+          @keyframes lv-led-pulse{0%,100%{filter:drop-shadow(0 0 2px #38bdf8);opacity:.85}50%{filter:drop-shadow(0 0 6px #38bdf8);opacity:1}}
+          .lv-progress{width:0}
+          .cec-machine.running .lv-progress{animation:lv-progress-grow 4s linear infinite}
+          @keyframes lv-progress-grow{0%{width:0px}100%{width:160px}}
+        </style>
+        <linearGradient id="lv-steel" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#1e293b"/><stop offset="25%" stop-color="#334155"/>
+          <stop offset="50%" stop-color="#475569"/><stop offset="75%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
         </linearGradient>
-        <linearGradient id="lv-door" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#f4f8fb"/><stop offset="1" stop-color="#c9d3dc"/>
+        <linearGradient id="lv-panel" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/>
         </linearGradient>
-        <radialGradient id="lv-glow" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stop-color="rgba(71,181,255,.55)"/><stop offset="1" stop-color="rgba(71,181,255,0)"/>
-        </radialGradient>
       </defs>
-      <rect x="20" y="14" width="160" height="216" rx="14" fill="url(#lv-body)" stroke="#c2cbd4" stroke-width="1.5"/>
-      <!-- pannello LED superiore -->
-      <rect x="30" y="24" width="140" height="20" rx="6" fill="#0f1720"/>
-      <text x="42" y="38" text-anchor="middle" font-family="monospace" font-size="10" fill="${accent}" data-role="disp">--:--</text>
-      <g data-role="cyclelights">
-        <circle cx="120" cy="34" r="4" class="cec-cyc" data-c="wash" fill="#3a4552"/>
-        <circle cx="138" cy="34" r="4" class="cec-cyc" data-c="heat" fill="#3a4552"/>
-        <circle cx="156" cy="34" r="4" class="cec-cyc" data-c="ready" fill="#3a4552"/>
-      </g>
-      <!-- porta flat -->
-      <rect x="26" y="50" width="148" height="174" rx="10" fill="url(#lv-door)" stroke="#c2cbd4" stroke-width="1"/>
-      <rect x="26" y="50" width="148" height="174" rx="10" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1"/>
-      <!-- maniglia incassata -->
-      <rect x="40" y="58" width="120" height="10" rx="5" fill="#dfe6ec" stroke="#bfc9d2"/>
-      <!-- vapore dal bordo superiore quando in funzione -->
-      <g class="cec-steam" data-role="steam">
-        ${[60, 100, 140].map((x, i) => `<path class="cec-vapor v${i}" d="M${x},58 q6,-10 0,-20 q-6,-10 0,-20" stroke="rgba(200,230,255,.6)" stroke-width="3" fill="none" stroke-linecap="round"/>`).join("")}
-      </g>
-      <!-- fascio luce a pavimento (alcuni modelli lo proiettano quando in funzione) -->
-      <ellipse cx="100" cy="228" rx="46" ry="7" fill="url(#lv-glow)" class="cec-floorbeam" data-role="floorbeam"/>
-      <!-- zoccolo -->
-      <rect x="30" y="230" width="140" height="8" rx="3" fill="#c2cbd4"/>
+      <rect x="65" y="455" width="270" height="15" fill="#000000" opacity="0.6"/>
+      <rect x="60" y="60" width="280" height="390" rx="16" fill="url(#lv-steel)" stroke="#334155" stroke-width="3"/>
+      <rect x="65" y="65" width="270" height="55" rx="10" fill="url(#lv-panel)" stroke="#1e293b" stroke-width="2"/>
+      <text x="200" y="82" fill="#f8fafc" font-family="-apple-system,sans-serif" font-size="12" font-weight="bold" letter-spacing="2" text-anchor="middle">LAVASTOVIGLIE</text>
+      <rect x="145" y="93" width="110" height="20" rx="4" fill="#020617" stroke="#0284c7" stroke-width="1.2"/>
+      <text x="200" y="107" fill="#38bdf8" font-family="'Courier New',monospace" font-size="10" font-weight="bold" text-anchor="middle"
+        textLength="100" lengthAdjust="spacingAndGlyphs" data-role="disp">PRONTA</text>
+      <rect x="65" y="123" width="270" height="312" fill="url(#lv-steel)"/>
+      <path d="M 75 130 L 160 130 L 325 435 L 240 435 Z" fill="#ffffff" opacity="0.04"/>
+      <rect x="110" y="133" width="180" height="14" rx="6" fill="#020617" stroke="#475569" stroke-width="1"/>
+      <rect x="120" y="138" width="160" height="4" rx="2" fill="#1e293b"/>
+      <rect x="120" y="138" height="4" rx="2" fill="#38bdf8" class="lv-led lv-progress"/>
+      <rect x="65" y="435" width="270" height="15" fill="#0f172a"/>
+      <rect x="80" y="450" width="30" height="8" fill="#0f172a"/>
+      <rect x="290" y="450" width="30" height="8" fill="#0f172a"/>
     </svg>`;
   }
 
   _svgForno() {
     return `
-    <svg viewBox="0 0 200 250" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 500 500" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="fo-body" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#3a3f47"/><stop offset="0.5" stop-color="#2b2f36"/><stop offset="1" stop-color="#1c1f24"/>
+        <style>
+          .fo-fan{transform-origin:250px 305px}
+          .cec-machine.running .fo-fan{animation:fo-fan-spin 2s linear infinite}
+          @keyframes fo-fan-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+          .fo-heat{opacity:0;transition:opacity .5s}
+          .cec-machine.running .fo-heat{opacity:1;animation:fo-heat-glow 3s ease-in-out infinite}
+          @keyframes fo-heat-glow{0%,100%{opacity:.25}50%{opacity:.55}}
+          .fo-led{opacity:.5}
+          .cec-machine.plug-on .fo-led{animation:fo-led-blink 2s infinite}
+          @keyframes fo-led-blink{0%,100%{opacity:.9}50%{opacity:1;filter:drop-shadow(0 0 4px #38bdf8)}}
+        </style>
+        <linearGradient id="fo-inox" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#475569"/><stop offset="25%" stop-color="#94a3b8"/>
+          <stop offset="50%" stop-color="#cbd5e1"/><stop offset="75%" stop-color="#94a3b8"/><stop offset="100%" stop-color="#334155"/>
         </linearGradient>
-        <radialGradient id="fo-glow" cx="0.5" cy="0.6" r="0.7">
-          <stop offset="0" stop-color="#ffb020"/><stop offset="0.55" stop-color="#a3320f"/><stop offset="1" stop-color="#180a05"/>
+        <linearGradient id="fo-handle" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#f8fafc"/><stop offset="50%" stop-color="#94a3b8"/><stop offset="100%" stop-color="#475569"/>
+        </linearGradient>
+        <radialGradient id="fo-light" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#f97316" stop-opacity="0.8"/><stop offset="70%" stop-color="#7c2d12" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#1c1917" stop-opacity="0.1"/>
         </radialGradient>
       </defs>
-      <rect x="20" y="14" width="160" height="216" rx="12" fill="url(#fo-body)" stroke="#111316" stroke-width="1.5"/>
-      <!-- cornice inox (bordo incasso) -->
-      <rect x="20" y="14" width="160" height="216" rx="12" fill="none" stroke="rgba(200,210,220,.35)" stroke-width="1"/>
-      <!-- pannello comandi -->
-      <rect x="30" y="22" width="140" height="30" rx="6" fill="#15171b" stroke="#0a0b0d"/>
-      <rect x="38" y="30" width="50" height="16" rx="3" fill="#0a0d10"/>
-      <text x="63" y="42" text-anchor="middle" font-family="monospace" font-size="11" fill="#ff8a3d" data-role="disp">--:--</text>
-      <circle cx="145" cy="37" r="10" fill="#2c3138" stroke="#484f58" stroke-width="1.5"/>
-      <path d="M145,37 m-7,0 a7,7 0 0 1 7,-7" stroke="#8fd6ff" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <path d="M145,37 m7,0 a7,7 0 0 1 -3.5,6" stroke="#ff8a3d" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <!-- porta con finestrella -->
-      <rect x="28" y="60" width="144" height="158" rx="8" fill="#26292f" stroke="#111316"/>
-      <rect x="38" y="70" width="124" height="100" rx="6" fill="#0c0d0f" stroke="#000"/>
-      <rect x="38" y="70" width="124" height="100" rx="6" fill="url(#fo-glow)" class="cec-oven-glow" data-role="glow" opacity="0"/>
-      <!-- griglie interne -->
-      <g stroke="rgba(255,255,255,.10)" stroke-width="1.4">
-        <line x1="44" y1="100" x2="156" y2="100"/><line x1="44" y1="130" x2="156" y2="130"/><line x1="44" y1="150" x2="156" y2="150"/>
+      <rect x="20" y="20" width="460" height="460" rx="4" fill="#1e293b" stroke="#0f172a" stroke-width="4"/>
+      <rect x="40" y="40" width="420" height="420" rx="12" fill="url(#fo-inox)" stroke="#1e293b" stroke-width="3"/>
+      <rect x="50" y="50" width="400" height="85" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+      <text x="250" y="70" fill="#f8fafc" font-family="-apple-system,sans-serif" font-size="15" font-weight="bold" letter-spacing="2" text-anchor="middle">Hisense</text>
+      <circle cx="90" cy="92" r="22" fill="url(#fo-inox)" stroke="#1e293b" stroke-width="2"/>
+      <circle cx="90" cy="92" r="18" fill="#0f172a"/><rect x="88" y="76" width="4" height="16" rx="1" fill="#f8fafc"/>
+      <circle cx="410" cy="92" r="22" fill="url(#fo-inox)" stroke="#1e293b" stroke-width="2"/>
+      <circle cx="410" cy="92" r="18" fill="#0f172a"/><rect x="408" y="76" width="4" height="16" rx="1" fill="#f8fafc"/>
+      <rect x="160" y="73" width="180" height="40" rx="6" fill="#020617" stroke="#1e293b" stroke-width="1.5"/>
+      <text x="250" y="98" fill="#38bdf8" font-family="'Courier New',monospace" font-size="14" font-weight="bold" text-anchor="middle"
+        textLength="168" lengthAdjust="spacingAndGlyphs" class="fo-led" data-role="disp">PRONTA</text>
+      <rect x="50" y="140" width="400" height="310" fill="#020617" stroke="#334155" stroke-width="3"/>
+      <rect x="85" y="185" width="330" height="245" rx="8" fill="#1c1917" stroke="#334155" stroke-width="2"/>
+      <rect x="85" y="185" width="330" height="245" rx="8" fill="url(#fo-light)" class="fo-heat"/>
+      <g class="fo-fan">
+        <circle cx="250" cy="305" r="32" fill="#27272a" opacity="0.6"/>
+        <path d="M 250 305 Q 260 275 250 270 Q 240 275 250 305 Z" fill="#71717a"/>
+        <path d="M 250 305 Q 280 315 285 305 Q 280 295 250 305 Z" fill="#71717a"/>
+        <path d="M 250 305 Q 240 335 250 340 Q 260 335 250 305 Z" fill="#71717a"/>
+        <path d="M 250 305 Q 220 295 215 305 Q 220 315 250 305 Z" fill="#71717a"/>
+        <circle cx="250" cy="305" r="7" fill="#e4e4e7"/>
       </g>
-      <!-- calore che sale -->
-      <g class="cec-heatwave" data-role="heat">
-        ${[60, 100, 140].map((x, i) => `<path class="cec-vapor v${i}" d="M${x},130 q8,-14 0,-28 q-8,-14 0,-28" stroke="rgba(255,190,120,.55)" stroke-width="3" fill="none" stroke-linecap="round"/>`).join("")}
-      </g>
-      <!-- riflesso sul vetro -->
-      <path d="M46,72 L70,72 L52,166 L44,166 Z" fill="rgba(255,255,255,.06)"/>
-      <!-- maniglia a tutta larghezza (tipico incasso) -->
-      <rect x="30" y="182" width="140" height="9" rx="4.5" fill="#5a616b" stroke="#2c3138"/>
-      <rect x="30" y="182" width="140" height="3" rx="1.5" fill="rgba(255,255,255,.18)"/>
-      <!-- sfiato -->
-      <g stroke="#484f58" stroke-width="2"><line x1="70" y1="18" x2="130" y2="18"/></g>
-      <!-- piedini -->
-      <rect x="34" y="230" width="10" height="6" rx="2" fill="#111316"/><rect x="156" y="230" width="10" height="6" rx="2" fill="#111316"/>
+      <line x1="95" y1="320" x2="405" y2="320" stroke="#e4e4e7" stroke-width="2.5" opacity="0.8"/>
+      <line x1="95" y1="380" x2="405" y2="380" stroke="#52525b" stroke-width="5"/>
+      <path d="M 90 185 L 220 185 L 120 430 L 90 430 Z" fill="#ffffff" opacity="0.06"/>
+      <rect x="70" y="150" width="360" height="18" rx="6" fill="url(#fo-handle)" stroke="#334155" stroke-width="1"/>
     </svg>`;
   }
 
-  // Frigorifero a 2 ante — combi classico europeo: piccolo vano freezer sopra,
-  // grande vano frigo sotto, giunto/cerniera visibile a metà, maniglie vicine
-  // al giunto (come nei frigo reali, es. Haier 2 porte).
-  _svgFrigo2Ante() {
-    const accent = "#47b5ff";
-    const seamY = 95; // 10..95 = sportello superiore (freezer), 95..260 = sportello inferiore (frigo)
+  _svgPianoInduzione() {
     return `
-    <svg viewBox="0 0 170 270" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 500 400" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="fr-body" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#eef4fa"/><stop offset="1" stop-color="#ccd5de"/>
+        <style>
+          .pi-zone{opacity:.4}
+          .cec-machine.running .pi-zone{animation:pi-zone-glow 2.5s ease-in-out infinite;opacity:1}
+          @keyframes pi-zone-glow{0%,100%{filter:drop-shadow(0 0 2px #38bdf8);opacity:.8}50%{filter:drop-shadow(0 0 6px #0284c7);opacity:1}}
+          .pi-slider{opacity:.4}
+          .cec-machine.running .pi-slider{animation:pi-slider-pulse 1.8s ease-in-out infinite;opacity:1}
+          @keyframes pi-slider-pulse{0%,100%{opacity:.85}50%{opacity:1;filter:drop-shadow(0 0 4px #38bdf8)}}
+        </style>
+        <linearGradient id="pi-glass" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#111827"/><stop offset="50%" stop-color="#090d16"/><stop offset="100%" stop-color="#030712"/>
         </linearGradient>
-        <linearGradient id="fr-doortop" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#fdfeff"/><stop offset="1" stop-color="#dde5ec"/>
+        <linearGradient id="pi-frame" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#334155"/><stop offset="50%" stop-color="#64748b"/><stop offset="100%" stop-color="#1e293b"/>
         </linearGradient>
-        <linearGradient id="fr-doorbot" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#f6fafd"/><stop offset="1" stop-color="#ccd6de"/>
-        </linearGradient>
-        <radialGradient id="fr-glow" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stop-color="${accent}" stop-opacity=".55"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/>
-        </radialGradient>
       </defs>
-      <!-- corpo esterno -->
-      <rect x="14" y="8" width="142" height="254" rx="14" fill="url(#fr-body)" stroke="#b9c4cf" stroke-width="1.5"/>
-      <!-- sportello superiore: freezer -->
-      <rect x="21" y="14" width="128" height="${seamY - 14 - 4}" rx="9" fill="url(#fr-doortop)" stroke="#c2cbd4"/>
-      <!-- display temperatura incassato nel freezer -->
-      <rect x="30" y="20" width="58" height="17" rx="5" fill="#0f1720"/>
-      <text x="59" y="33" text-anchor="middle" font-family="monospace" font-size="10" fill="${accent}" data-role="disp">--°</text>
-      <text x="132" y="33" text-anchor="middle" font-size="14">❄️</text>
-      <!-- maniglia freezer: vicina al giunto -->
-      <rect x="30" y="${seamY - 16}" width="110" height="7" rx="3.5" fill="#dfe6ec" stroke="#bfc9d2"/>
-      <!-- giunto tra le due ante -->
-      <rect x="14" y="${seamY - 3}" width="142" height="6" fill="#aab6c1"/>
-      <rect x="14" y="${seamY - 1}" width="142" height="1.5" fill="#8b98a6" opacity=".6"/>
-      <!-- sportello inferiore: frigo -->
-      <rect x="21" y="${seamY + 3}" width="128" height="${256 - seamY}" rx="9" fill="url(#fr-doorbot)" stroke="#c2cbd4"/>
-      <!-- maniglia frigo: vicina al giunto -->
-      <rect x="30" y="${seamY + 10}" width="110" height="7" rx="3.5" fill="#dfe6ec" stroke="#bfc9d2"/>
-      <!-- riflesso leggero sull'anta grande -->
-      <rect x="30" y="${seamY + 26}" width="35" height="${256 - seamY - 40}" rx="6" fill="rgba(255,255,255,.35)"/>
-      <!-- vano/griglia compressore in basso -->
-      <rect x="28" y="240" width="114" height="10" rx="4" fill="#c9d3dc" stroke="#b3bfc9"/>
-      <g stroke="#8b98a6" stroke-width="1.4"><line x1="36" y1="245" x2="134" y2="245"/></g>
-      <ellipse cx="85" cy="245" rx="62" ry="18" fill="url(#fr-glow)" class="cec-compglow" data-role="compglow" opacity="0"/>
+      <rect x="0" y="0" width="500" height="400" fill="#0b0f19"/>
+      <rect x="45" y="45" width="410" height="310" rx="12" fill="#000000" opacity="0.6"/>
+      <rect x="50" y="50" width="400" height="300" rx="10" fill="url(#pi-glass)" stroke="url(#pi-frame)" stroke-width="2.5"/>
+      <rect x="52" y="52" width="396" height="296" rx="8" fill="none" stroke="#334155" stroke-width="1"/>
+      <text x="250" y="75" fill="#f8fafc" font-family="-apple-system,sans-serif" font-size="12" font-weight="bold" letter-spacing="3" text-anchor="middle">SAMSUNG</text>
+      <g class="pi-zone">
+        <rect x="80" y="100" width="120" height="180" rx="8" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="6 4"/>
+        <text x="140" y="190" fill="#0284c7" font-family="-apple-system,sans-serif" font-size="8" font-weight="bold" letter-spacing="1" text-anchor="middle">FLEX ZONE</text>
+        <line x1="140" y1="120" x2="140" y2="140" stroke="#38bdf8" stroke-width="1.5"/><line x1="130" y1="130" x2="150" y2="130" stroke="#38bdf8" stroke-width="1.5"/>
+        <line x1="140" y1="240" x2="140" y2="260" stroke="#38bdf8" stroke-width="1.5"/><line x1="130" y1="250" x2="150" y2="250" stroke="#38bdf8" stroke-width="1.5"/>
+      </g>
+      <g class="pi-zone">
+        <circle cx="320" cy="220" r="55" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="6 4"/>
+        <circle cx="320" cy="220" r="25" fill="none" stroke="#0284c7" stroke-width="1"/>
+        <line x1="320" y1="210" x2="320" y2="230" stroke="#38bdf8" stroke-width="1.5"/><line x1="310" y1="220" x2="330" y2="220" stroke="#38bdf8" stroke-width="1.5"/>
+      </g>
+      <circle cx="320" cy="130" r="35" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="6 4" class="pi-zone"/>
+      <line x1="320" y1="123" x2="320" y2="137" stroke="#38bdf8" stroke-width="1.5"/><line x1="313" y1="130" x2="327" y2="130" stroke="#38bdf8" stroke-width="1.5"/>
+      <path d="M 60 60 L 150 60 L 440 340 L 350 340 Z" fill="#ffffff" opacity="0.03"/>
+      <rect x="70" y="305" width="360" height="30" fill="#020617" opacity="0.8"/>
+      <circle cx="90" cy="320" r="8" fill="none" stroke="#ef4444" stroke-width="1.5"/><line x1="90" y1="315" x2="90" y2="321" stroke="#ef4444" stroke-width="1.5"/>
+      <line x1="130" y1="320" x2="230" y2="320" stroke="#1e293b" stroke-width="4" stroke-linecap="round"/>
+      <line x1="130" y1="320" x2="190" y2="320" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" class="pi-slider"/>
+      <text x="250" y="324" fill="#38bdf8" font-family="'Courier New',monospace" font-size="11" font-weight="bold" text-anchor="middle"
+        textLength="70" lengthAdjust="spacingAndGlyphs" class="pi-slider" data-role="disp">PRONTA</text>
     </svg>`;
   }
 
-  // Congelatore verticale — sportello unico, brina nella parte bassa.
-  _svgCongelatore() {
-    const accent = "#8fd6ff";
+  // Frigorifero Haier a 4 ante: 2 sportelli frigo (con dispenser acqua incassato
+  // sulla destra) + 2 cassetti congelatore sotto. La temperatura mostrata è
+  // decorativa (non tracciamo un sensore di temperatura reale).
+  _svgFrigoHaier() {
     return `
-    <svg viewBox="0 0 170 270" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 400 650" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="cg-body" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#f2fbff"/><stop offset="1" stop-color="#d7dee6"/>
+        <style>
+          .fr-drop{opacity:0}
+          .cec-machine.plug-on .fr-drop{animation:fr-drop-flow 1.8s cubic-bezier(.4,0,.6,1) infinite}
+          @keyframes fr-drop-flow{0%{transform:translateY(0) scaleY(1);opacity:0}30%{opacity:1}70%{opacity:1}100%{transform:translateY(32px) scaleY(1.4);opacity:0}}
+          .fr-disp{opacity:.5}
+          .cec-machine.plug-on .fr-disp{animation:fr-led-glow 2.5s ease-in-out infinite}
+          @keyframes fr-led-glow{0%,100%{filter:drop-shadow(0 0 2px #38bdf8);opacity:.9}50%{filter:drop-shadow(0 0 6px #38bdf8);opacity:1}}
+          .fr-fresh{opacity:.15}
+          .cec-machine.running .fr-fresh{animation:fr-cool-pulse 3s ease-in-out infinite}
+          @keyframes fr-cool-pulse{0%,100%{opacity:.3}50%{opacity:.8}}
+        </style>
+        <linearGradient id="fr-steel" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#1e293b"/><stop offset="20%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/>
+          <stop offset="80%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
         </linearGradient>
-        <radialGradient id="cg-glow" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stop-color="${accent}" stop-opacity=".55"/><stop offset="1" stop-color="${accent}" stop-opacity="0"/>
-        </radialGradient>
+        <linearGradient id="fr-niche" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#020617"/><stop offset="100%" stop-color="#1e293b"/>
+        </linearGradient>
+        <linearGradient id="fr-stream" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/><stop offset="100%" stop-color="#0284c7" stop-opacity="0.2"/>
+        </linearGradient>
       </defs>
-      <rect x="15" y="10" width="140" height="250" rx="16" fill="url(#cg-body)" stroke="#c2cbd4" stroke-width="1.5"/>
-      <rect x="15" y="10" width="140" height="250" rx="16" fill="none" stroke="rgba(255,255,255,.7)" stroke-width="1" opacity=".6"/>
-      <rect x="28" y="22" width="70" height="20" rx="6" fill="#0f1720"/>
-      <text x="63" y="37" text-anchor="middle" font-family="monospace" font-size="11" fill="${accent}" data-role="disp">--°</text>
-      <text x="122" y="37" text-anchor="middle" font-size="16">❄️</text>
-      <rect x="122" y="60" width="9" height="150" rx="4.5" fill="#dfe6ec" stroke="#bfc9d2"/>
-      <line x1="15" y1="250" x2="155" y2="250" stroke="#c2cbd4" stroke-width="1.5"/>
-      <!-- brina: puntini/striature nella parte bassa -->
-      <g opacity=".55">
-        ${Array.from({ length: 14 }).map((_, i) => {
-          const x = 26 + (i % 7) * 16 + (Math.floor(i / 7) * 6);
-          const y = 190 + Math.floor(i / 7) * 22;
-          return `<circle cx="${x}" cy="${y}" r="${1.4 + (i % 3) * 0.5}" fill="#ffffff"/>`;
-        }).join("")}
+      <rect x="40" y="20" width="320" height="610" rx="16" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="4"/>
+      <text x="200" y="42" fill="#e2e8f0" font-family="-apple-system,sans-serif" font-size="14" font-weight="bold" letter-spacing="4" text-anchor="middle">Haier</text>
+      <path d="M 46 52 L 197 52 L 197 402 L 46 402 Z" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
+      <path d="M 203 52 L 354 52 L 354 402 L 203 402 Z" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
+      <line x1="200" y1="52" x2="200" y2="402" stroke="#020617" stroke-width="3"/>
+      <rect x="190" y="160" width="6" height="150" rx="3" fill="#020617"/><rect x="204" y="160" width="6" height="150" rx="3" fill="#020617"/>
+      <rect x="242" y="125" width="90" height="135" rx="10" fill="url(#fr-niche)" stroke="#334155" stroke-width="2"/>
+      <rect x="248" y="131" width="78" height="123" rx="6" fill="#090d16"/>
+      <g class="fr-disp">
+        <text x="287" y="149" fill="#38bdf8" font-family="monospace" font-size="10" font-weight="bold" text-anchor="middle">4°C | -18°C</text>
+        <path d="M 279 160 Q 287 152 295 160 Q 287 168 279 160 Z" fill="#38bdf8"/>
       </g>
-      <rect x="30" y="235" width="110" height="10" rx="4" fill="#c9d3dc" stroke="#b3bfc9"/>
-      <g stroke="#8b98a6" stroke-width="1.4"><line x1="38" y1="240" x2="132" y2="240"/></g>
-      <ellipse cx="85" cy="240" rx="60" ry="18" fill="url(#cg-glow)" class="cec-compglow" data-role="compglow" opacity="0"/>
+      <rect x="281" y="175" width="12" height="8" rx="2" fill="#64748b"/>
+      <line x1="287" y1="183" x2="287" y2="233" stroke="url(#fr-stream)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="287" cy="187" r="3" fill="#7dd3fc" class="fr-drop"/>
+      <circle cx="287" cy="195" r="2.5" fill="#38bdf8" class="fr-drop" style="animation-delay:.6s"/>
+      <rect x="254" y="237" width="66" height="10" rx="2" fill="#1e293b" stroke="#334155"/>
+      <line x1="260" y1="242" x2="314" y2="242" stroke="#475569" stroke-width="2" stroke-dasharray="4 2"/>
+      <rect x="46" y="410" width="308" height="95" rx="6" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
+      <rect x="120" y="420" width="160" height="10" rx="5" fill="#020617"/>
+      <rect x="122" y="422" width="156" height="3" rx="1.5" fill="#475569" opacity="0.6"/>
+      <rect x="65" y="423" width="30" height="4" rx="2" fill="#38bdf8" class="fr-fresh"/>
+      <rect x="46" y="513" width="308" height="102" rx="6" fill="url(#fr-steel)" stroke="#0f172a" stroke-width="2"/>
+      <rect x="120" y="523" width="160" height="10" rx="5" fill="#020617"/>
+      <rect x="122" y="525" width="156" height="3" rx="1.5" fill="#475569" opacity="0.6"/>
+      <rect x="60" y="618" width="30" height="8" rx="2" fill="#0f172a"/><rect x="310" y="618" width="30" height="8" rx="2" fill="#0f172a"/>
+    </svg>`;
+  }
+
+  // Congelatore a pozzetto: coperchio superiore che "respira" quando il
+  // compressore è attivo, display touch con temperatura decorativa.
+  _svgCongelatoreChest() {
+    return `
+    <svg viewBox="0 0 400 500" class="cec-svg" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <style>
+          .cg-lid{transform:translateY(0)}
+          .cec-machine.running .cg-lid{animation:cg-lid-lift 3.5s ease-in-out infinite}
+          @keyframes cg-lid-lift{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+          .cg-led{opacity:.5}
+          .cec-machine.plug-on .cg-led{animation:cg-led-pulse 2s ease-in-out infinite}
+          @keyframes cg-led-pulse{0%,100%{filter:drop-shadow(0 0 2px #38bdf8);opacity:.85}50%{filter:drop-shadow(0 0 6px #38bdf8);opacity:1}}
+        </style>
+        <linearGradient id="cg-steel" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#1e293b"/><stop offset="25%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/>
+          <stop offset="75%" stop-color="#334155"/><stop offset="100%" stop-color="#0f172a"/>
+        </linearGradient>
+        <linearGradient id="cg-lid-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#334155"/><stop offset="50%" stop-color="#475569"/><stop offset="100%" stop-color="#1e293b"/>
+        </linearGradient>
+      </defs>
+      <rect x="65" y="455" width="270" height="15" fill="#000000" opacity="0.6"/>
+      <rect x="60" y="60" width="280" height="390" rx="16" fill="url(#cg-steel)" stroke="#334155" stroke-width="3"/>
+      <rect x="65" y="113" width="270" height="332" fill="url(#cg-steel)"/>
+      <text x="200" y="145" fill="#f8fafc" font-family="-apple-system,sans-serif" font-size="13" font-weight="bold" letter-spacing="2.5" text-anchor="middle">CONGELATORE</text>
+      <rect x="150" y="170" width="100" height="32" rx="6" fill="#020617" stroke="#0284c7" stroke-width="1.5"/>
+      <text x="200" y="191" fill="#38bdf8" font-family="'Courier New',monospace" font-size="12" font-weight="bold" text-anchor="middle" class="cg-led">-20°C</text>
+      <path d="M 75 120 L 160 120 L 325 430 L 240 430 Z" fill="#ffffff" opacity="0.04"/>
+      <g class="cg-lid">
+        <rect x="65" y="65" width="270" height="45" rx="10" fill="url(#cg-lid-grad)" stroke="#475569" stroke-width="2"/>
+        <rect x="120" y="80" width="160" height="14" rx="6" fill="#020617" stroke="#475569" stroke-width="1"/>
+        <rect x="125" y="83" width="150" height="3" rx="1.5" fill="#38bdf8" class="cg-led"/>
+      </g>
+      <line x1="60" y1="110" x2="340" y2="110" stroke="#020617" stroke-width="3"/>
+      <rect x="80" y="450" width="30" height="8" fill="#0f172a"/><rect x="290" y="450" width="30" height="8" fill="#0f172a"/>
     </svg>`;
   }
 
@@ -637,6 +770,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
         <select id="f_kind">
           <option value="lavastoviglie"${c.kind === "lavastoviglie" ? " selected" : ""}>🍽️ Lavastoviglie</option>
           <option value="forno"${c.kind === "forno" ? " selected" : ""}>🔥 Forno</option>
+          <option value="piano_induzione"${c.kind === "piano_induzione" ? " selected" : ""}>🍳 Piano induzione</option>
           <option value="frigorifero"${c.kind === "frigorifero" ? " selected" : ""}>❄️ Frigorifero</option>
           <option value="congelatore"${c.kind === "congelatore" ? " selected" : ""}>🧊 Congelatore</option>
         </select></div>
