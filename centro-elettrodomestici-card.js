@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.0";
+const CEC_VERSION = "2.2.1";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -765,8 +765,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
 
   _togglePower() {
     if (CONTINUOUS[this._cfg.kind]) return; // sicurezza: mai spegnere frigo/congelatore da qui
-    if (this._cfg.switch && this._hass.states[this._cfg.switch]) {
-      this._hass.callService("switch", "toggle", { entity_id: this._cfg.switch });
+    const id = this._cfg.switch;
+    if (id && this._hass.states[id]) {
+      // usa il dominio vero dell'entità (switch/light/input_boolean/fan...), non
+      // sempre "switch": una Stanza spesso comanda una luce, non una presa.
+      this._hass.callService(id.split(".")[0], "toggle", { entity_id: id });
     }
   }
 
@@ -986,7 +989,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
       <div class="fld"><label>Nome</label><input type="text" id="f_name" value="${(c.name || "").replace(/"/g, "&quot;")}"></div>
       <div class="fld"><label>Sensore potenza (W)</label><select id="f_power">${this._opts(["sensor."], c.power)}</select></div>
       <div class="fld"><label>Sensore energia (kWh) — per storico/costo</label><select id="f_energy">${this._opts(["sensor."], c.energy)}</select></div>
-      <div class="fld"><label>Presa/interruttore — opzionale</label><select id="f_switch">${this._opts(["switch.", "input_boolean."], c.switch)}</select></div>
+      <div class="fld"><label>Presa/interruttore/luce — opzionale</label><select id="f_switch">${this._opts(["switch.", "light.", "input_boolean."], c.switch)}</select></div>
       <div class="fld"><label>Soglia "in funzione" (W)</label><input type="number" min="1" max="500" id="f_soglia" value="${c.soglia || 10}"></div>
       ${c.kind === "lavastoviglie" ? `
       <div class="fld"><label>Soglia riscaldamento (W)</label><span class="h">0 = disattiva</span>
