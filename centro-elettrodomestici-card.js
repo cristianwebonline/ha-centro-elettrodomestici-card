@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.1.0";
+const CEC_VERSION = "2.2.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -32,7 +32,15 @@ const CEC_DEFAULTS = {
   congelatore: { kind: "congelatore", name: "Congelatore", power: "sensor.congelatore_potenza",
     energy: "sensor.congelatore_energia_kwh", switch: "switch.congelatore_presa_1",
     soglia: 15, prezzo_kwh: 0.30, storico_giorni: 14 },
+  stanza: { kind: "stanza", name: "Stanza", icon_type: "generic",
+    power: "", energy: "", switch: "", temp: "", humidity: "",
+    soglia: 10, soglia_freddo: 18, soglia_caldo: 26, prezzo_kwh: 0.30, storico_giorni: 14 },
 };
+// "Stanza" (generico, non un elettrodomestico a cicli/compressore): usa la vista
+// grafico+media invece della lista cicli, ma NON deve mai perdere il comando
+// on/off — quel blocco è una sicurezza specifica per frigo/congelatore, non va
+// esteso qui. Vedi uso separato più sotto (CHART_VIEW vs CONTINUOUS).
+const CHART_VIEW = Object.assign({}, CONTINUOUS, { stanza: true });
 
 // Impedisce a librerie tipo "hass-swipe-navigation" di leggere un tocco dentro la
 // card come uno swipe di cambio-vista. Ferma la propagazione del gesto (senza
@@ -130,7 +138,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
     const now = new Date();
     const start = new Date(now.getTime() - days * 86400000);
     try {
-      if (CONTINUOUS[this._cfg.kind]) {
+      if (CHART_VIEW[this._cfg.kind]) {
         if (!this._cfg.power) { this._hist = null; }
         else {
           const res = await this._hass.callWS({
@@ -241,7 +249,139 @@ class CentroElettrodomesticiCard extends HTMLElement {
     if (kind === "forno") return this._svgForno();
     if (kind === "piano_induzione") return this._svgPianoInduzione();
     if (kind === "frigorifero") return this._svgFrigoHaier();
-    return this._svgCongelatoreChest();
+    if (kind === "congelatore") return this._svgCongelatoreChest();
+    return this._iconStanza();
+  }
+
+  // Icone "Stanza": non elettrodomestici a fasi, ma dispositivi/ambienti generici
+  // (luce, presa, TV, clima di una stanza). 4 stili curati a mano invece di
+  // un'icona mdi piatta — vedi anteprima approvata da Cristian.
+  _iconStanza() {
+    const t = this._cfg.icon_type;
+    if (t === "climate") return this._iconClimate();
+    if (t === "livingroom") return this._iconLivingroom();
+    if (t === "bedroom") return this._iconBedroom();
+    return this._iconGeneric();
+  }
+
+  // Termometro: sempre visibile (una stanza non si "spegne"), colore e livello
+  // del mercurio legati al sensore di temperatura reale — non decorativo.
+  _iconClimate() {
+    return `
+    <svg viewBox="0 0 100 100" class="cec-svg stz-icon" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="stzThermStem" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#2a3040"/><stop offset=".45" stop-color="#3a4150"/><stop offset="1" stop-color="#232833"/>
+        </linearGradient>
+        <linearGradient id="stzThermGlass" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#fff" stop-opacity=".4"/><stop offset=".3" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="stzMercuryComfy" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff8a3d"/><stop offset="1" stop-color="#ffd166"/></linearGradient>
+        <linearGradient id="stzMercuryCold" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#2f8fd6"/><stop offset="1" stop-color="#7ecbff"/></linearGradient>
+        <linearGradient id="stzMercuryHot" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#e6432b"/><stop offset="1" stop-color="#ff8a63"/></linearGradient>
+        <radialGradient id="stzBulbComfy" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#ffd166"/><stop offset=".55" stop-color="#ff8a3d"/><stop offset="1" stop-color="#e8662a"/></radialGradient>
+        <radialGradient id="stzBulbCold" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#bfe4ff"/><stop offset=".55" stop-color="#4aa8e6"/><stop offset="1" stop-color="#2f7fc2"/></radialGradient>
+        <radialGradient id="stzBulbHot" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#ffb199"/><stop offset=".55" stop-color="#ef4b30"/><stop offset="1" stop-color="#c1341e"/></radialGradient>
+        <radialGradient id="stzThermGlow" cx="50%" cy="55%" r="52%"><stop offset="0" stop-color="#ff9a4d" stop-opacity=".28"/><stop offset="1" stop-color="#ff9a4d" stop-opacity="0"/></radialGradient>
+        <radialGradient id="stzShadow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000" stop-opacity=".35"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      </defs>
+      <ellipse data-role="thermglow" cx="50" cy="60" rx="34" ry="30" fill="url(#stzThermGlow)"/>
+      <ellipse cx="50" cy="90" rx="19" ry="4.5" fill="url(#stzShadow)"/>
+      <rect x="41" y="14" width="18" height="50" rx="9" fill="url(#stzThermStem)" stroke="#4a5261" stroke-width="1.4"/>
+      <rect x="43" y="15" width="4" height="46" rx="2" fill="url(#stzThermGlass)"/>
+      <circle cx="50" cy="72" r="17" fill="url(#stzThermStem)" stroke="#4a5261" stroke-width="1.4"/>
+      <rect data-role="mercury" x="46.3" y="30" width="7.4" height="46" rx="3.7" fill="url(#stzMercuryComfy)"/>
+      <circle data-role="bulb" cx="50" cy="72" r="11" fill="url(#stzBulbComfy)"/>
+      <ellipse cx="45.5" cy="66.5" rx="3" ry="4.5" fill="#fff" opacity=".35"/>
+      <g stroke="#5a6472" stroke-width="1.6" stroke-linecap="round">
+        <line x1="61" y1="24" x2="65" y2="24"/><line x1="61" y1="32" x2="68" y2="32"/>
+        <line x1="61" y1="40" x2="65" y2="40"/><line x1="61" y1="48" x2="68" y2="48"/><line x1="61" y1="56" x2="65" y2="56"/>
+      </g>
+    </svg>`;
+  }
+
+  // Divano+TV: usato per soggiorno/salotto. Il bagliore e lo schermo si
+  // accendono quando il dispositivo collegato (luce/presa/TV) è acceso.
+  _iconLivingroom() {
+    return `
+    <svg viewBox="0 0 100 100" class="cec-svg stz-icon" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="stzSofaBack" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5b6472"/><stop offset=".5" stop-color="#454d5a"/><stop offset="1" stop-color="#343b46"/></linearGradient>
+        <linearGradient id="stzSofaArm" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5b6472"/><stop offset="1" stop-color="#3a4150"/></linearGradient>
+        <linearGradient id="stzSofaCush" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#636c79"/><stop offset="1" stop-color="#454d5a"/></linearGradient>
+        <linearGradient id="stzTvBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2e38"/><stop offset="1" stop-color="#12141a"/></linearGradient>
+        <radialGradient id="stzScreen" cx="50%" cy="40%" r="75%"><stop offset="0" stop-color="#8fd6ff"/><stop offset=".55" stop-color="#47b5ff"/><stop offset="1" stop-color="#1e7fd6"/></radialGradient>
+        <radialGradient id="stzSofaGlow" cx="50%" cy="55%" r="52%"><stop offset="0" stop-color="#47b5ff" stop-opacity=".28"/><stop offset="1" stop-color="#47b5ff" stop-opacity="0"/></radialGradient>
+        <radialGradient id="stzShadow2" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000" stop-opacity=".4"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      </defs>
+      <ellipse class="stz-glow" cx="50" cy="55" rx="42" ry="30" fill="url(#stzSofaGlow)"/>
+      <ellipse cx="50" cy="86" rx="35" ry="5" fill="url(#stzShadow2)"/>
+      <rect x="30" y="12" width="40" height="27" rx="4" fill="url(#stzTvBody)" stroke="#050608" stroke-width="1.5"/>
+      <rect class="stz-screen" x="33.5" y="15.5" width="33" height="20" rx="2" fill="url(#stzScreen)"/>
+      <rect class="stz-screen" x="37" y="19" width="18" height="2.6" rx="1.3" fill="#fff" opacity=".55"/>
+      <rect class="stz-screen" x="37" y="24" width="24" height="2.6" rx="1.3" fill="#fff" opacity=".35"/>
+      <rect x="46" y="39" width="8" height="4" fill="#12141a"/>
+      <rect x="38" y="42" width="24" height="3" rx="1.5" fill="#12141a"/>
+      <path d="M16 58 a8 8 0 0 1 8 -8 h52 a8 8 0 0 1 8 8 v10 h-68 z" fill="url(#stzSofaBack)"/>
+      <rect x="16" y="36" width="13" height="34" rx="6.5" fill="url(#stzSofaArm)"/>
+      <rect x="71" y="36" width="13" height="34" rx="6.5" fill="url(#stzSofaArm)"/>
+      <rect x="20" y="58" width="60" height="16" rx="7" fill="url(#stzSofaCush)"/>
+      <line x1="40" y1="60" x2="40" y2="72" stroke="#343b46" stroke-width="1.3" opacity=".6"/>
+      <line x1="60" y1="60" x2="60" y2="72" stroke="#343b46" stroke-width="1.3" opacity=".6"/>
+      <rect x="20" y="70" width="60" height="7" rx="3.5" fill="#3a4150"/>
+    </svg>`;
+  }
+
+  // Presa/dispositivo generico: LED e simbolo lampo si accendono quando è on.
+  _iconGeneric() {
+    return `
+    <svg viewBox="0 0 100 100" class="cec-svg stz-icon" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="stzPlugBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a4150"/><stop offset=".5" stop-color="#2a3040"/><stop offset="1" stop-color="#1c212b"/></linearGradient>
+        <linearGradient id="stzPlugFace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a5261"/><stop offset="1" stop-color="#333a46"/></linearGradient>
+        <radialGradient id="stzLed" cx="50%" cy="38%" r="70%"><stop offset="0" stop-color="#ffe29a"/><stop offset=".5" stop-color="#ffb020"/><stop offset="1" stop-color="#e6890a"/></radialGradient>
+        <radialGradient id="stzPlugGlow" cx="50%" cy="45%" r="55%"><stop offset="0" stop-color="#ffb020" stop-opacity=".4"/><stop offset="1" stop-color="#ffb020" stop-opacity="0"/></radialGradient>
+        <radialGradient id="stzShadow3" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000" stop-opacity=".4"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      </defs>
+      <ellipse class="stz-glow" cx="50" cy="55" rx="30" ry="26" fill="url(#stzPlugGlow)"/>
+      <ellipse cx="50" cy="88" rx="21" ry="4.5" fill="url(#stzShadow3)"/>
+      <rect x="26" y="16" width="48" height="60" rx="16" fill="url(#stzPlugBody)" stroke="#0f1319" stroke-width="1.5"/>
+      <rect x="30" y="19" width="40" height="8" rx="4" fill="#fff" opacity=".08"/>
+      <rect x="32" y="22" width="36" height="38" rx="12" fill="url(#stzPlugFace)"/>
+      <circle cx="42" cy="35" r="4" fill="#1c212b"/><circle cx="58" cy="35" r="4" fill="#1c212b"/>
+      <rect x="45" y="46" width="10" height="12" rx="3" fill="#1c212b"/>
+      <circle class="stz-bolt" cx="50" cy="67" r="9" fill="url(#stzLed)"/>
+      <path class="stz-bolt" d="M52 61.5 L46.5 68.5 L49.5 68.5 L48 74.5 L54 66.8 L50.8 66.8 Z" fill="#7a4a00"/>
+    </svg>`;
+  }
+
+  // Letto: usato per camere da letto. Bagliore caldo quando il dispositivo
+  // collegato (luce/presa) è acceso.
+  _iconBedroom() {
+    return `
+    <svg viewBox="0 0 100 100" class="cec-svg stz-icon" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="stzBedHead" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6b5643"/><stop offset=".5" stop-color="#4a3b2e"/><stop offset="1" stop-color="#382c22"/></linearGradient>
+        <linearGradient id="stzBedFrame" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5b6472"/><stop offset="1" stop-color="#3a4150"/></linearGradient>
+        <radialGradient id="stzPillow" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#eef1f5"/><stop offset="1" stop-color="#ccd3db"/></radialGradient>
+        <linearGradient id="stzDuvet" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fc9f5"/><stop offset=".5" stop-color="#7dbcf5"/><stop offset="1" stop-color="#5a9de0"/></linearGradient>
+        <radialGradient id="stzBedGlow" cx="50%" cy="55%" r="55%"><stop offset="0" stop-color="#ff8a3d" stop-opacity=".3"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient>
+        <radialGradient id="stzShadow4" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#000" stop-opacity=".4"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+      </defs>
+      <ellipse class="stz-glow" cx="50" cy="58" rx="40" ry="28" fill="url(#stzBedGlow)"/>
+      <ellipse cx="50" cy="86" rx="37" ry="5" fill="url(#stzShadow4)"/>
+      <rect x="15" y="26" width="12" height="46" rx="4" fill="url(#stzBedHead)" stroke="#2b2119" stroke-width="1.3"/>
+      <rect x="18" y="30" width="6" height="38" rx="2" fill="#000" opacity=".15"/>
+      <rect x="20" y="46" width="62" height="24" rx="7" fill="url(#stzBedFrame)"/>
+      <rect x="20" y="46" width="62" height="6" rx="3" fill="#fff" opacity=".12"/>
+      <ellipse cx="34" cy="50" rx="13" ry="8.5" fill="url(#stzPillow)"/>
+      <path d="M23 50 q11 -5 22 0" stroke="#c7cfd8" stroke-width="1.2" fill="none" opacity=".7"/>
+      <rect x="46" y="52" width="34" height="18" rx="7" fill="url(#stzDuvet)"/>
+      <path d="M50 58 q14 4 28 0" stroke="#4d7fb8" stroke-width="1.2" fill="none" opacity=".5"/>
+      <path d="M50 64 q14 4 28 0" stroke="#4d7fb8" stroke-width="1.2" fill="none" opacity=".35"/>
+      <rect x="24" y="70" width="4" height="8" rx="1.5" fill="#2f3542"/>
+      <rect x="74" y="70" width="4" height="8" rx="1.5" fill="#2f3542"/>
+    </svg>`;
   }
 
   // Disegni "smart" forniti da Cristian (stile SmartThings/Bespoke, coerente con
@@ -554,6 +694,18 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-compglow{transition:opacity .6s}
       .cec-machine.running .cec-compglow{opacity:1;animation:cec-comp-pulse 2.4s ease-in-out infinite}
       @keyframes cec-comp-pulse{0%,100%{opacity:.5}50%{opacity:1}}
+      /* stanza — icone generiche stanza/dispositivo */
+      .cec-machine[data-kind="stanza"] .cec-glass-wrap{max-width:112px}
+      .stz-icon [data-role="mercury"]{transition:height .6s ease,y .6s ease}
+      .stz-glow{opacity:.12;transition:opacity .5s}
+      .cec-machine.running .stz-glow{opacity:1;animation:stz-pulse 2.6s ease-in-out infinite}
+      @keyframes stz-pulse{0%,100%{opacity:.6}50%{opacity:1}}
+      .stz-screen,.stz-bolt{opacity:.25;transition:opacity .4s}
+      .cec-machine.running .stz-screen{opacity:1;animation:stz-pulse-fast 2s ease-in-out infinite}
+      .cec-machine.running .stz-bolt{opacity:1;filter:drop-shadow(0 0 5px #ffb020);animation:stz-pulse-fast 1.8s ease-in-out infinite}
+      @keyframes stz-pulse-fast{0%,100%{opacity:.75}50%{opacity:1}}
+      .cec-sub{font-size:11.5px;color:var(--cec-muted);margin-top:-2px;text-align:center}
+      .cec-machine[data-phase="on"] .cec-state{color:#8ff0b4}
       .cec-scrim{position:fixed;inset:0;background:rgba(4,5,8,.62);backdrop-filter:blur(6px);display:flex;
         align-items:center;justify-content:center;padding:22px;z-index:9;opacity:0;pointer-events:none;transition:opacity .18s}
       .cec-scrim.on{opacity:1;pointer-events:auto}
@@ -590,6 +742,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
         <div class="cec-name">${this._esc(this._cfg.name)}</div>
         <div class="cec-plugbadge" data-role="plugbadge" hidden><span class="dot"></span><span class="lbl">—</span></div>
         <div class="cec-state" data-role="state">—</div>
+        <div class="cec-sub" data-role="sub" hidden></div>
         <div class="cec-metrics"><div class="cec-metric"><span data-role="power">–</span><small>W</small></div></div>
         <div class="cec-lastcycle" data-role="lastcycle" hidden></div>
         <div class="cec-actions"><button class="cec-btn" data-role="histbtn">📜 Storico e costi</button></div>
@@ -617,8 +770,62 @@ class CentroElettrodomesticiCard extends HTMLElement {
     }
   }
 
+  // Stanza: non ha fasi tipo "riscaldamento/preriscaldo/cottura" da rilevare dal
+  // consumo — è on/off (dalla presa se configurata, altrimenti dalla potenza) più,
+  // se configurati, temperatura/umidità della stanza. _update() normale non si
+  // applica: qui evitiamo del tutto classifyPhase().
+  _updateStanza() {
+    const cfg = this._cfg;
+    const sw = cfg.switch && this._hass.states[cfg.switch];
+    const p = this._num(cfg.power);
+    let on;
+    if (sw) on = sw.state === "on";
+    else if (cfg.power) on = p != null && p > (parseFloat(cfg.soglia) || 10);
+    else on = false;
+    this._el.classList.toggle("running", on);
+    this._el.classList.toggle("plug-on", on);
+    this._el.dataset.phase = on ? "on" : "off";
+    this._el.querySelector('[data-role="state"]').textContent = on ? "Accesa" : "Spenta";
+    this._el.querySelector('[data-role="power"]').textContent = p != null ? Math.round(p) : "–";
+    const badge = this._el.querySelector('[data-role="plugbadge"]');
+    if (sw) {
+      badge.hidden = false;
+      badge.dataset.plug = on ? "on" : "off";
+      badge.querySelector(".lbl").textContent = on ? "Accesa" : "Spenta";
+    } else badge.hidden = true;
+
+    const t = this._num(cfg.temp), h = this._num(cfg.humidity);
+    const sub = this._el.querySelector('[data-role="sub"]');
+    if (t != null || h != null) {
+      sub.hidden = false;
+      sub.innerHTML = [t != null ? `🌡️ ${this._fmt(t)}°C` : "", h != null ? `💧 ${Math.round(h)}%` : ""]
+        .filter(Boolean).join(" · ");
+    } else sub.hidden = true;
+
+    if (cfg.icon_type === "climate" && t != null) {
+      const mercury = this._el.querySelector('[data-role="mercury"]');
+      const bulb = this._el.querySelector('[data-role="bulb"]');
+      if (mercury && bulb) {
+        const lo = 5, hi = 35, bottom = 76, minH = 6, maxH = 46;
+        const frac = Math.min(1, Math.max(0, (t - lo) / (hi - lo)));
+        const hgt = minH + frac * (maxH - minH);
+        mercury.setAttribute("height", hgt.toFixed(1));
+        mercury.setAttribute("y", (bottom - hgt).toFixed(1));
+        const freddo = parseFloat(cfg.soglia_freddo), caldo = parseFloat(cfg.soglia_caldo);
+        let cls = "Comfy";
+        if (!isNaN(freddo) && t < freddo) cls = "Cold";
+        else if (!isNaN(caldo) && t > caldo) cls = "Hot";
+        mercury.setAttribute("fill", `url(#stzMercury${cls})`);
+        bulb.setAttribute("fill", `url(#stzBulb${cls})`);
+      }
+    }
+    const lc = this._el.querySelector('[data-role="lastcycle"]');
+    if (lc) lc.hidden = true;
+  }
+
   _update() {
     if (!this._el) return;
+    if (this._cfg.kind === "stanza") { this._updateStanza(); return; }
     const p = this._num(this._cfg.power);
     const soglia = parseFloat(this._cfg.soglia) || 10;
     const wasRunning = this._el.classList.contains("running");
@@ -660,7 +867,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
   }
 
   _openHistory() {
-    const hist = this._hist, cfg = this._cfg, continuous = CONTINUOUS[cfg.kind];
+    const hist = this._hist, cfg = this._cfg, continuous = CHART_VIEW[cfg.kind];
     let ov = this.querySelector(".cec-scrim");
     if (!ov) { ov = document.createElement("div"); ov.className = "cec-scrim"; this.querySelector(".cec").appendChild(ov); }
     if (!cfg.energy) {
@@ -774,6 +981,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
           <option value="piano_induzione"${c.kind === "piano_induzione" ? " selected" : ""}>🍳 Piano induzione</option>
           <option value="frigorifero"${c.kind === "frigorifero" ? " selected" : ""}>❄️ Frigorifero</option>
           <option value="congelatore"${c.kind === "congelatore" ? " selected" : ""}>🧊 Congelatore</option>
+          <option value="stanza"${c.kind === "stanza" ? " selected" : ""}>🛋️ Stanza / dispositivo</option>
         </select></div>
       <div class="fld"><label>Nome</label><input type="text" id="f_name" value="${(c.name || "").replace(/"/g, "&quot;")}"></div>
       <div class="fld"><label>Sensore potenza (W)</label><select id="f_power">${this._opts(["sensor."], c.power)}</select></div>
@@ -786,6 +994,20 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
       ${c.kind === "forno" ? `
       <div class="fld"><label>Minuti di preriscaldo stimati</label><span class="h">sotto questo tempo dall'accensione mostra "Preriscaldo"</span>
         <input type="number" min="1" max="60" id="f_preheat" value="${c.preriscaldo_min || 10}"></div>` : ""}
+      ${c.kind === "stanza" ? `
+      <div class="fld"><label>Icona</label>
+        <select id="f_icontype">
+          <option value="generic"${c.icon_type === "generic" ? " selected" : ""}>🔌 Generica (presa/dispositivo)</option>
+          <option value="climate"${c.icon_type === "climate" ? " selected" : ""}>🌡️ Temperatura/Clima</option>
+          <option value="livingroom"${c.icon_type === "livingroom" ? " selected" : ""}>🛋️ Soggiorno</option>
+          <option value="bedroom"${c.icon_type === "bedroom" ? " selected" : ""}>🛏️ Camera da letto</option>
+        </select></div>
+      <div class="fld"><label>Sensore temperatura — opzionale</label><select id="f_temp">${this._opts(["sensor."], c.temp)}</select></div>
+      <div class="fld"><label>Sensore umidità — opzionale</label><select id="f_humidity">${this._opts(["sensor."], c.humidity)}</select></div>
+      <div class="row">
+        <div class="fld"><label>Soglia freddo (°C)</label><input type="number" id="f_sfreddo" value="${c.soglia_freddo ?? 18}"></div>
+        <div class="fld"><label>Soglia caldo (°C)</label><input type="number" id="f_scaldo" value="${c.soglia_caldo ?? 26}"></div>
+      </div>` : ""}
       <div class="row">
         <div class="fld"><label>Prezzo energia (€/kWh)</label>
           <input type="number" step="0.01" min="0" max="5" id="f_price" value="${c.prezzo_kwh}"></div>
@@ -797,7 +1019,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
       <div class="fld"><label>Foto (URL) — opzionale</label>
         <span class="h">Incolla il link di una foto vera del tuo elettrodomestico per usarla al posto del disegno</span>
         <input type="text" id="f_photo" placeholder="https://..." value="${(c.photo_url || "").replace(/"/g, "&quot;")}"></div>
-      <div class="note">💡 Le soglie sono una STIMA dal consumo istantaneo (non leggono il programma reale). Frigorifero e congelatore mostrano solo il grafico consumi (funzionano in continuo, non a cicli).</div>
+      <div class="note">💡 Le soglie sono una STIMA dal consumo istantaneo (non leggono il programma reale). Frigorifero, congelatore e Stanza mostrano solo il grafico consumi (non a cicli); per Stanza serve il sensore di potenza per avere lo storico.</div>
     </div>`;
     const on = (id, ev, fn) => { const el = this.querySelector(id); if (el) el.addEventListener(ev, fn); };
     on("#f_kind", "change", e => this._set("kind", e.target.value));
@@ -808,6 +1030,11 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_soglia", "change", e => this._set("soglia", parseInt(e.target.value) || 10));
     on("#f_sr", "change", e => this._set("soglia_riscaldamento", parseInt(e.target.value) || 0));
     on("#f_preheat", "change", e => this._set("preriscaldo_min", parseInt(e.target.value) || 10));
+    on("#f_icontype", "change", e => this._set("icon_type", e.target.value));
+    on("#f_temp", "change", e => this._set("temp", e.target.value));
+    on("#f_humidity", "change", e => this._set("humidity", e.target.value));
+    on("#f_sfreddo", "change", e => this._set("soglia_freddo", parseFloat(String(e.target.value).replace(",", ".")) || 18));
+    on("#f_scaldo", "change", e => this._set("soglia_caldo", parseFloat(String(e.target.value).replace(",", ".")) || 26));
     on("#f_price", "change", e => this._set("prezzo_kwh", parseFloat(String(e.target.value).replace(",", ".")) || 0.30));
     on("#f_days", "change", e => this._set("storico_giorni", parseInt(e.target.value) || 14));
     on("#f_photo", "change", e => this._set("photo_url", e.target.value.trim()));
@@ -819,7 +1046,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "centro-elettrodomestici-card",
   name: "Centro Elettrodomestici Card",
-  description: "Card indipendente per lavastoviglie, forno, frigorifero o congelatore: fase dal consumo, storico e costo.",
+  description: "Card indipendente per lavastoviglie, forno, frigorifero, congelatore o stanza/dispositivo generico: fase dal consumo, storico e costo.",
   preview: true,
   documentationURL: "https://github.com/cristianwebonline/ha-centro-elettrodomestici-card",
 });
