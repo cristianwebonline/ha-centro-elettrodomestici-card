@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "1.1.0";
+const CEC_VERSION = "1.2.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -90,11 +90,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
     if (!this._histLoading && Date.now() - this._histTs > 10 * 60 * 1000) this._loadHistory();
   }
 
-  getCardSize() { return 6; }
+  getCardSize() { return 8; }
   // Dashboard "sections": dichiara che la card è ridimensionabile — HA mostra la
   // scheda "Layout" nell'editor con le maniglie per allungarla/accorciarla.
   getLayoutOptions() {
-    return { grid_rows: 6, grid_columns: 4, grid_min_rows: 3, grid_max_rows: 14, grid_min_columns: 2, grid_max_columns: 6 };
+    return { grid_rows: 8, grid_columns: 4, grid_min_rows: 4, grid_max_rows: 14, grid_min_columns: 2, grid_max_columns: 6 };
   }
   static getConfigElement() { return document.createElement("centro-elettrodomestici-card-editor"); }
   static getStubConfig() { return JSON.parse(JSON.stringify(CEC_DEFAULTS.lavastoviglie)); }
@@ -361,7 +361,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
     <style>
       .cec{--cec-panel:rgba(30,38,48,.72);--cec-stroke:rgba(255,255,255,.09);--cec-ink:#eaf1f8;--cec-muted:#93a1b0;
         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--cec-ink);padding:6px;
-        height:100%;display:flex;flex-direction:column}
+        min-height:100%;display:flex;flex-direction:column}
       .cec *{box-sizing:border-box}
       .cec-machine{background:var(--cec-panel);border:1px solid var(--cec-stroke);border-radius:22px;padding:16px 14px;
         flex:1;
@@ -376,6 +376,8 @@ class CentroElettrodomesticiCard extends HTMLElement {
         font-size:10.5px;font-weight:800;letter-spacing:.3px;background:rgba(255,255,255,.06);border:1px solid var(--cec-stroke);
         color:var(--cec-muted);cursor:pointer;transition:transform .12s,filter .15s}
       .cec-plugbadge:hover{transform:translateY(-1px);filter:brightness(1.15)}
+      .cec-plugbadge-readonly{cursor:default!important}
+      .cec-plugbadge-readonly:hover{transform:none!important;filter:none!important}
       .cec-plugbadge .dot{width:7px;height:7px;border-radius:50%;background:#5a6572;flex:0 0 auto}
       .cec-plugbadge[data-plug="on"]{background:rgba(56,224,138,.16);border-color:rgba(56,224,138,.45);color:#8ff0b4;
         animation:cec-plug-blink 3s ease-in-out infinite}
@@ -464,10 +466,18 @@ class CentroElettrodomesticiCard extends HTMLElement {
     this.querySelector('[data-role="tap"]').onclick = () => this._openHistory();
     this.querySelector('[data-role="histbtn"]').onclick = () => this._openHistory();
     const badge = this.querySelector('[data-role="plugbadge"]');
-    badge.onclick = e => { e.stopPropagation(); this._togglePower(); };
+    // Frigorifero e congelatore: la presa NON si deve poter spegnere per sbaglio
+    // dalla dashboard (rischio di perdere il cibo) — il badge resta solo un
+    // indicatore, non un comando, per questi due tipi.
+    if (!CONTINUOUS[this._cfg.kind]) {
+      badge.onclick = e => { e.stopPropagation(); this._togglePower(); };
+    } else {
+      badge.classList.add("cec-plugbadge-readonly");
+    }
   }
 
   _togglePower() {
+    if (CONTINUOUS[this._cfg.kind]) return; // sicurezza: mai spegnere frigo/congelatore da qui
     if (this._cfg.switch && this._hass.states[this._cfg.switch]) {
       this._hass.callService("switch", "toggle", { entity_id: this._cfg.switch });
     }
