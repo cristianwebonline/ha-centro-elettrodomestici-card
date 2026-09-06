@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.1";
+const CEC_VERSION = "2.2.2";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -46,8 +46,12 @@ const CHART_VIEW = Object.assign({}, CONTINUOUS, { stanza: true });
 // card come uno swipe di cambio-vista. Ferma la propagazione del gesto (senza
 // preventDefault): scroll verticale e tap restano normali.
 function stopSwipeNavHijack(el) {
+  // In modalità modifica dashboard (URL con "edit=1") non blocchiamo nulla:
+  // altrimenti l'editor di HA non riceve più il gesto e la card non si può
+  // più trascinare per riordinarla o ridimensionarla.
+  const inEditMode = () => location.search.indexOf("edit=1") !== -1;
   ["touchstart", "touchmove", "touchend", "pointerdown", "pointermove"].forEach(evt =>
-    el.addEventListener(evt, e => e.stopPropagation(), { passive: true }));
+    el.addEventListener(evt, e => { if (!inEditMode()) e.stopPropagation(); }, { passive: true }));
 }
 
 // Classifica la fase dal consumo istantaneo (euristica a soglie, non legge il
@@ -939,14 +943,24 @@ customElements.define("centro-elettrodomestici-card", CentroElettrodomesticiCard
 // Editor
 // ===========================================================================
 class CentroElettrodomesticiCardEditor extends HTMLElement {
+  // HA richiama setConfig() sull'editor a ogni modifica (anche quelle fatte
+  // dall'editor stesso). Ridisegnare da capo mentre l'utente sta scrivendo in
+  // un campo di testo (es. Nome) gli fa perdere il fuoco a ogni carattere —
+  // su telefono si vede la tastiera aprirsi e chiudersi ad ogni lettera.
+  // _typingLock (acceso da focus/blur sui campi di testo, vedi _render) salta
+  // il ridisegno mentre è attivo; i campi "kind"/select restano invece
+  // reattivi subito, perché lì serve aggiornare i campi condizionali.
   setConfig(config) {
     const kind = CEC_DEFAULTS[config && config.kind] ? config.kind : "lavastoviglie";
     this._config = Object.assign({}, CEC_DEFAULTS[kind], config || {}, { kind });
+    if (this._typingLock) return;
     this._render();
   }
   // NB: HA non garantisce l'ordine hass/setConfig — se hass arriva prima, non c'è
-  // ancora una config da disegnare: aspettiamo che setConfig() faccia il primo render.
-  set hass(h) { this._hass = h; if (h && this._config) this._render(); }
+  // ancora una config da disegnare: aspettiamo che setConfig() faccia il primo
+  // render. Dopo, non serve ridisegnare a ogni tick di hass (succede spesso,
+  // anche mentre l'utente sta scrivendo).
+  set hass(h) { this._hass = h; if (h && this._config && !this._built) { this._render(); this._built = true; } }
 
   _emit() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
   _set(key, val) { this._config = Object.assign({}, this._config, { [key]: val }); this._emit(); }
@@ -1041,6 +1055,10 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_price", "change", e => this._set("prezzo_kwh", parseFloat(String(e.target.value).replace(",", ".")) || 0.30));
     on("#f_days", "change", e => this._set("storico_giorni", parseInt(e.target.value) || 14));
     on("#f_photo", "change", e => this._set("photo_url", e.target.value.trim()));
+    this.querySelectorAll('input[type="text"], input[type="number"]').forEach(inp => {
+      inp.addEventListener("focus", () => { this._typingLock = true; });
+      inp.addEventListener("blur", () => { this._typingLock = false; });
+    });
   }
 }
 customElements.define("centro-elettrodomestici-card-editor", CentroElettrodomesticiCardEditor);
