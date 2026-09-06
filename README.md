@@ -20,6 +20,8 @@ dipende da server esterni.
   mostrano il grafico consumi + media giornaliera, senza lista cicli
 - Tutto ricostruito dallo storico energia già presente in Home Assistant (nessun
   helper nuovo da creare)
+- **Ridimensionabile in altezza/larghezza** dall'editor dashboard di HA (scheda "Layout")
+- **Foto vera opzionale** (`photo_url`): se la imposti, sostituisce il disegno con la tua foto
 - **Editor visuale** completo, senza toccare YAML
 
 ## Uso
