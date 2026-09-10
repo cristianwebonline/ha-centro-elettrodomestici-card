@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.3";
+const CEC_VERSION = "2.2.4";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -647,6 +647,11 @@ class CentroElettrodomesticiCard extends HTMLElement {
         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--cec-ink);padding:6px;
         min-height:100%;display:flex;flex-direction:column}
       .cec *{box-sizing:border-box}
+      /* L'attributo hidden e solo un display:none del browser: una regola di
+         classe con un display: proprio lo batte, e il riquadro che il codice
+         crede nascosto resta li in bella vista. Questa riga glielo
+         restituisce. */
+      .cec [hidden]{display:none!important}
       .cec-machine{background:var(--cec-panel);border:1px solid var(--cec-stroke);border-radius:22px;padding:16px 14px;
         flex:1;
         display:flex;flex-direction:column;align-items:center;gap:6px;backdrop-filter:blur(14px);
