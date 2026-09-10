@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.4";
+const CEC_VERSION = "2.2.5";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -722,7 +722,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-sub{font-size:11.5px;color:var(--cec-muted);margin-top:-2px;text-align:center}
       .cec-machine[data-phase="on"] .cec-state{color:#8ff0b4}
       .cec-scrim{position:fixed;inset:0;background:rgba(4,5,8,.62);backdrop-filter:blur(6px);display:flex;
-        align-items:center;justify-content:center;padding:22px;z-index:9;opacity:0;pointer-events:none;transition:opacity .18s}
+        align-items:center;justify-content:center;padding:22px;z-index:100;opacity:0;pointer-events:none;transition:opacity .18s}
       .cec-scrim.on{opacity:1;pointer-events:auto}
       .cec-modal{width:100%;max-width:380px;max-height:80vh;overflow-y:auto;background:#1a1b21;border:1px solid rgba(255,255,255,.16);
         border-radius:24px;padding:20px 18px;box-shadow:0 24px 60px rgba(0,0,0,.6);transform:translateY(14px) scale(.97);transition:transform .2s}
