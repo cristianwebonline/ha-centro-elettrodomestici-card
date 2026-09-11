@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.3.0";
+const CEC_VERSION = "2.4.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -151,13 +151,43 @@ class CentroElettrodomesticiCard extends HTMLElement {
       if (CHART_VIEW[this._cfg.kind]) {
         if (!this._cfg.power) { this._hist = null; }
         else {
-          const res = await this._hass.callWS({
-            type: "history/history_during_period",
-            start_time: start.toISOString(), end_time: now.toISOString(),
-            entity_ids: [this._cfg.power], minimal_response: true, no_attributes: true,
-          });
-          const rows = (res && res[this._cfg.power]) || [];
-          this._hist = { cycles: [], daily: this._integratePower(rows) };
+          // Prima si scaricava lo storico GREZZO della potenza e si integrava
+          // qui: su questo impianto sono 28.534 campioni per 14 giorni (il
+          // sensore scrive ogni 15 secondi) e il Raspberry ci metteva oltre
+          // mezzo minuto PER CARD. Con sette elettrodomestici in pagina era
+          // il motivo del "Carico i consumi..." interminabile.
+          // Il registratore la media oraria l'ha gia calcolata: media in watt
+          // per un'ora = wattora, che e esattamente l'integrale che facevamo
+          // a mano. Stesso numero, 336 righe invece di 28.534.
+          // Restiamo sul sensore di POTENZA: i contatori di energia di frigo
+          // e congelatore qui non sono affidabili, e quella ragione vale
+          // ancora (vedi la nota sopra).
+          let rows = [];
+          try {
+            const st = await this._hass.callWS({
+              type: "recorder/statistics_during_period",
+              start_time: start.toISOString(), end_time: now.toISOString(),
+              statistic_ids: [this._cfg.power], period: "hour", types: ["mean"],
+            });
+            rows = (st && st[this._cfg.power]) || [];
+          } catch (e) { rows = []; }
+
+          if (rows.length) {
+            this._hist = { cycles: [], daily: this._giornoDaMedie(rows) };
+          } else {
+            // Nessuna statistica (sensore nuovo, o senza state_class): si
+            // torna allo storico grezzo, ma solo su due giorni — serve a far
+            // vedere qualcosa, non a reggere l'archivio.
+            const giorniRipiego = Math.min(days, 2);
+            const dopo = new Date(now.getTime() - giorniRipiego * 86400000);
+            const res = await this._hass.callWS({
+              type: "history/history_during_period",
+              start_time: dopo.toISOString(), end_time: now.toISOString(),
+              entity_ids: [this._cfg.power], minimal_response: true, no_attributes: true,
+            });
+            const grezze = (res && res[this._cfg.power]) || [];
+            this._hist = { cycles: [], daily: this._integratePower(grezze) };
+          }
         }
       } else {
         if (!this._cfg.energy) { this._hist = null; }
@@ -198,6 +228,22 @@ class CentroElettrodomesticiCard extends HTMLElement {
       if (dtS <= 0) continue;
       const kwh = (pts[i].w * dtS) / 3600 / 1000;
       const k = this._dkey(new Date(pts[i].t));
+      daily[k] = (daily[k] || 0) + kwh;
+    }
+    return daily;
+  }
+
+  // Media oraria in watt -> kWh per giorno. Un'ora di media W e W/1000 kWh.
+  // Stesso tetto di sicurezza dell'integrazione a mano: un sensore impazzito
+  // per un'ora non deve falsare la giornata.
+  _giornoDaMedie(rows) {
+    const MAX_W = 2500;
+    const daily = {};
+    for (const r of rows) {
+      const w = parseFloat(r.mean);
+      if (!isFinite(w)) continue;
+      const kwh = Math.min(MAX_W, Math.max(0, w)) / 1000;
+      const k = this._dkey(new Date(r.start));
       daily[k] = (daily[k] || 0) + kwh;
     }
     return daily;
