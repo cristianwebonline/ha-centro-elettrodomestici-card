@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.2.5";
+const CEC_VERSION = "2.3.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -659,7 +659,19 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-machine::before{content:"";position:absolute;inset:0;border-radius:22px;pointer-events:none;
         background:radial-gradient(120% 60% at 50% -10%,rgba(255,255,255,.06),transparent 60%)}
       .cec-glass-wrap{position:relative;width:100%;max-width:190px;cursor:pointer}
-      .cec-svg{width:100%;height:auto;display:block;filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
+      /* I disegni hanno viewBox alti (il frigo e 400x650): a larghezza piena
+         l'illustrazione da sola e piu alta che larga, e la card diventava un
+         rettangolo lunghissimo - sul telefono, a una colonna, insostenibile.
+         Qui il disegno non puo superare meta della larghezza della card: il
+         resto dello spazio va a nome, stato e tasti, e la card viene quasi
+         quadrata. Il disegno non si deforma, si rimpicciolisce e si centra.
+         Il contenitore e .cec-machine, non .cec: lo scrim a schermo intero
+         e appeso a .cec e deve restare FUORI da un container, se no torna a
+         restare prigioniero della card. */
+      .cec-machine{container-type:inline-size}
+      .cec-svg{width:100%;height:auto;display:block;max-height:54cqw;
+        filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
+      @supports not (max-height:1cqw){ .cec-svg{max-height:200px} }
       .cec-name{font-size:16px;font-weight:800;margin-top:4px}
       .cec-plugbadge{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;margin-top:5px;
         font-size:10.5px;font-weight:800;letter-spacing:.3px;background:rgba(255,255,255,.06);border:1px solid var(--cec-stroke);
