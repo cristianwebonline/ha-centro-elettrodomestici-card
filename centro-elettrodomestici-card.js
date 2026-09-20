@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.4.0";
+const CEC_VERSION = "2.5.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -715,10 +715,20 @@ class CentroElettrodomesticiCard extends HTMLElement {
          e appeso a .cec e deve restare FUORI da un container, se no torna a
          restare prigioniero della card. */
       .cec-machine{container-type:inline-size}
-      .cec-svg{width:100%;height:auto;display:block;max-height:54cqw;
+      /* IL DISEGNO NON DEVE MANGIARSI LA CARD. Era legato solo alla larghezza
+         (54cqw): in una tessera a mezza pagina stava bene, in una card larga
+         quanto il telefono diventava un quadro da mezzo schermo (il piano a
+         induzione). Adesso c'e anche un tetto in pixel, e si sceglie dalla
+         configurazione: piccolo, medio o grande. */
+      .cec-svg{width:100%;height:auto;display:block;max-height:min(54cqw,var(--cec-dis,190px));
         filter:drop-shadow(0 6px 10px rgba(0,0,0,.35))}
       @supports not (max-height:1cqw){ .cec-svg{max-height:200px} }
+      /* Le scritte seguono la larghezza della card: a mezza pagina si
+         stringono invece di andare a capo tre volte, su una card larga
+         crescono. Sotto ogni riga in cqw ce n'e una in pixel, per i browser
+         che non hanno le container query. */
       .cec-name{font-size:16px;font-weight:800;margin-top:4px}
+      .cec-name{font-size:clamp(12.5px,9.5cqw,17px);line-height:1.15;text-align:center}
       .cec-plugbadge{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;margin-top:5px;
         font-size:10.5px;font-weight:800;letter-spacing:.3px;background:rgba(255,255,255,.06);border:1px solid var(--cec-stroke);
         color:var(--cec-muted);cursor:pointer;transition:transform .12s,filter .15s}
@@ -733,18 +743,26 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-plugbadge[data-plug="off"] .dot{background:#ff5442}
       @keyframes cec-plug-blink{0%,100%{opacity:1}50%{opacity:.55}}
       .cec-machine.plug-on{background-color:rgba(56,224,138,.09);border-color:rgba(56,224,138,.28)}
-      .cec-state{font-size:12.5px;font-weight:700;color:var(--cec-muted);transition:color .3s}
+      .cec-state{font-size:12.5px;font-weight:700;color:var(--cec-muted);transition:color .3s;text-align:center}
+      .cec-state{font-size:clamp(10.5px,7cqw,13.5px)}
       .cec-machine[data-phase="wash"] .cec-state,.cec-machine[data-phase="cool"] .cec-state{color:#47b5ff}
       .cec-machine[data-phase="heat"] .cec-state,.cec-machine[data-phase="preheat"] .cec-state,.cec-machine[data-phase="cook"] .cec-state{color:#ff8a3d}
       .cec-metrics{display:flex;gap:14px;margin-top:2px}
       .cec-metric{font-size:22px;font-weight:850;font-variant-numeric:tabular-nums;line-height:1}
+      .cec-metric{font-size:clamp(17px,13cqw,26px)}
       .cec-metric small{font-size:10px;color:var(--cec-muted);font-weight:700;margin-left:2px}
       .cec-lastcycle{font-size:11.5px;color:var(--cec-muted);text-align:center;line-height:1.4;margin-top:4px}
+      .cec-lastcycle{font-size:clamp(9.5px,6.4cqw,12.5px);line-height:1.35}
       .cec-lastcycle b{color:var(--cec-ink);font-weight:800}
       .cec-lastcycle .eur{color:#ffb020;font-weight:800}
       .cec-actions{display:flex;flex-direction:column;gap:6px;width:100%;margin-top:10px}
       .cec-btn{background:rgba(255,255,255,.06);border:1px solid var(--cec-stroke);color:var(--cec-ink);
         border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700;cursor:pointer;width:100%;transition:filter .15s}
+      /* "Storico e costi" andava a capo in due righe dentro una card stretta:
+         il testo si stringe con la card e non si spezza piu. */
+      .cec-btn{font-size:clamp(10px,6.6cqw,13.5px);padding:clamp(7px,4.5cqw,11px) 6px;white-space:nowrap}
+      .cec-plugbadge{font-size:clamp(8.5px,5.6cqw,10.5px);padding:clamp(3px,2cqw,5px) clamp(8px,5cqw,13px)}
+      .cec-machine{padding:clamp(10px,6cqw,16px) clamp(8px,5cqw,14px)}
       .cec-btn:hover{filter:brightness(1.25)}
       /* animazioni lavastoviglie */
       .cec-steam,.cec-floorbeam{opacity:0;transition:opacity .5s}
@@ -812,17 +830,20 @@ class CentroElettrodomesticiCard extends HTMLElement {
     <div class="cec">
       <div class="cec-machine" data-kind="${this._cfg.kind}">
         <div class="cec-glass-wrap" data-role="tap">${this._visual()}</div>
-        <div class="cec-name">${this._esc(this._cfg.name)}</div>
+        <div class="cec-name"${this._cfg.mostra_nome === false ? " hidden" : ""}>${this._esc(this._cfg.name)}</div>
         <div class="cec-plugbadge" data-role="plugbadge" hidden><span class="dot"></span><span class="lbl">—</span></div>
-        <div class="cec-state" data-role="state">—</div>
+        <div class="cec-state" data-role="state"${this._cfg.mostra_stato === false ? " hidden" : ""}>—</div>
         <div class="cec-sub" data-role="sub" hidden></div>
-        <div class="cec-metrics"><div class="cec-metric"><span data-role="power">–</span><small>W</small></div></div>
+        <div class="cec-metrics"${this._cfg.mostra_watt === false ? " hidden" : ""}><div class="cec-metric"><span data-role="power">–</span><small>W</small></div></div>
         <div class="cec-lastcycle" data-role="lastcycle" hidden></div>
-        <div class="cec-actions"><button class="cec-btn" data-role="histbtn">📜 Storico e costi</button></div>
+        <div class="cec-actions"${this._cfg.mostra_storico === false ? " hidden" : ""}><button class="cec-btn" data-role="histbtn">📜 Storico e costi</button></div>
       </div>
     </div>`;
     stopSwipeNavHijack(this.querySelector(".cec"));
     this._el = this.querySelector(".cec-machine");
+    // Quanto grande il disegno: e una scelta di gusto, quindi si sceglie.
+    const misure = { piccolo: "120px", medio: "190px", grande: "280px" };
+    this._el.style.setProperty("--cec-dis", misure[this._cfg.disegno] || misure.medio);
     this.querySelector('[data-role="tap"]').onclick = () => this._openHistory();
     this.querySelector('[data-role="histbtn"]').onclick = () => this._openHistory();
     const badge = this.querySelector('[data-role="plugbadge"]');
@@ -935,7 +956,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
     const hist = this._hist;
     if (SHOW_CYCLES[this._cfg.kind] && hist && hist.cycles && hist.cycles.length) {
       const last = running ? hist.cycles.find(c => !this._isOngoing(c)) : hist.cycles[0];
-      if (last) {
+      if (last && this._cfg.mostra_ultimo_ciclo !== false) {
         lc.hidden = false;
         lc.innerHTML = `Ultimo ciclo: <b>~${last.hours}h</b> · <b>${this._fmt(last.kwh)} kWh</b> · <span class="eur">${this._fmtE(last.kwh)}</span>`;
       } else lc.hidden = true;
@@ -1102,6 +1123,25 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
             <option value="14"${c.storico_giorni == 14 ? " selected" : ""}>14 giorni</option>
             <option value="30"${c.storico_giorni == 30 ? " selected" : ""}>30 giorni</option></select></div>
       </div>
+      <div class="fld"><label>Dimensione del disegno</label>
+        <span class="h">Quanto spazio si prende l'immagine dentro la card. In una card larga
+        "grande" diventa un quadro: se la card sta da sola su tutta la riga, tieni medio.</span>
+        <select id="f_disegno">
+          <option value="piccolo"${c.disegno === "piccolo" ? " selected" : ""}>Piccolo</option>
+          <option value="medio"${(c.disegno || "medio") === "medio" ? " selected" : ""}>Medio</option>
+          <option value="grande"${c.disegno === "grande" ? " selected" : ""}>Grande</option>
+        </select></div>
+      <div class="fld"><label>Cosa si vede nella card</label>
+        <span class="h">Spegni quello che non guardi mai: la card si accorcia e le altre della
+        stessa riga restano allineate.</span>
+        <label><input type="checkbox" id="f_mnome"${c.mostra_nome !== false ? " checked" : ""}> Nome</label>
+        <label><input type="checkbox" id="f_mstato"${c.mostra_stato !== false ? " checked" : ""}> Riga di stato (Ferma, In funzione…)</label>
+        <label><input type="checkbox" id="f_mwatt"${c.mostra_watt !== false ? " checked" : ""}> Watt di adesso</label>
+        <label><input type="checkbox" id="f_mciclo"${c.mostra_ultimo_ciclo !== false ? " checked" : ""}> Ultimo ciclo (durata, kWh, costo)</label>
+        <label><input type="checkbox" id="f_mstorico"${c.mostra_storico !== false ? " checked" : ""}> Tasto "Storico e costi"</label>
+      </div>
+      <div class="fld"><label>Scritta del tasto</label>
+        <input type="text" id="f_tstorico" placeholder="Storico e costi" value="${(c.testo_storico || "").replace(/"/g, "&quot;")}"></div>
       <div class="fld"><label>Foto (URL) — opzionale</label>
         <span class="h">Incolla il link di una foto vera del tuo elettrodomestico per usarla al posto del disegno</span>
         <input type="text" id="f_photo" placeholder="https://..." value="${(c.photo_url || "").replace(/"/g, "&quot;")}"></div>
@@ -1122,6 +1162,11 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_sfreddo", "change", e => this._set("soglia_freddo", parseFloat(String(e.target.value).replace(",", ".")) || 18));
     on("#f_scaldo", "change", e => this._set("soglia_caldo", parseFloat(String(e.target.value).replace(",", ".")) || 26));
     on("#f_price", "change", e => this._set("prezzo_kwh", parseFloat(String(e.target.value).replace(",", ".")) || 0.30));
+    on("#f_disegno", "change", e => this._set("disegno", e.target.value));
+    on("#f_tstorico", "input", e => this._set("testo_storico", e.target.value));
+    [["#f_mnome", "mostra_nome"], ["#f_mstato", "mostra_stato"], ["#f_mwatt", "mostra_watt"],
+     ["#f_mciclo", "mostra_ultimo_ciclo"], ["#f_mstorico", "mostra_storico"]].forEach(([id, k]) =>
+      on(id, "change", e => this._set(k, e.target.checked)));
     on("#f_days", "change", e => this._set("storico_giorni", parseInt(e.target.value) || 14));
     on("#f_photo", "change", e => this._set("photo_url", e.target.value.trim()));
     this.querySelectorAll('input[type="text"], input[type="number"]').forEach(inp => {
