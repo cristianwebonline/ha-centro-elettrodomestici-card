@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.5.0";
+const CEC_VERSION = "2.6.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -751,6 +751,13 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-metric{font-size:22px;font-weight:850;font-variant-numeric:tabular-nums;line-height:1}
       .cec-metric{font-size:clamp(17px,13cqw,26px)}
       .cec-metric small{font-size:10px;color:var(--cec-muted);font-weight:700;margin-left:2px}
+      /* QUANTO HA CONSUMATO OGGI. C'era nella vecchia plancia ("Consumo Oggi"
+         e "Costo Oggi" del Centro Controllo Forno) e si era persa: il dato la
+         card ce l'ha gia, lo usa per il grafico, bastava scriverlo. */
+      .cec-oggi{font-size:12px;font-weight:800;text-align:center;margin-top:3px}
+      .cec-oggi small{font-weight:600;color:var(--cec-muted);font-size:11px}
+      .cec-oggi .eur{color:#ffb020}
+      .cec-oggi{font-size:clamp(10px,6.8cqw,13px)}
       .cec-lastcycle{font-size:11.5px;color:var(--cec-muted);text-align:center;line-height:1.4;margin-top:4px}
       .cec-lastcycle{font-size:clamp(9.5px,6.4cqw,12.5px);line-height:1.35}
       .cec-lastcycle b{color:var(--cec-ink);font-weight:800}
@@ -835,6 +842,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
         <div class="cec-state" data-role="state"${this._cfg.mostra_stato === false ? " hidden" : ""}>—</div>
         <div class="cec-sub" data-role="sub" hidden></div>
         <div class="cec-metrics"${this._cfg.mostra_watt === false ? " hidden" : ""}><div class="cec-metric"><span data-role="power">–</span><small>W</small></div></div>
+        <div class="cec-oggi" data-role="oggi" hidden></div>
         <div class="cec-lastcycle" data-role="lastcycle" hidden></div>
         <div class="cec-actions"${this._cfg.mostra_storico === false ? " hidden" : ""}><button class="cec-btn" data-role="histbtn">📜 Storico e costi</button></div>
       </div>
@@ -951,6 +959,18 @@ class CentroElettrodomesticiCard extends HTMLElement {
       if (sw && sw.state !== "on") disp.textContent = "SPENTA";
       else if (!running) disp.textContent = CONTINUOUS[this._cfg.kind] ? "A RIPOSO" : "PRONTA";
       else disp.textContent = dispLabelFor(phase.key);
+    }
+    // Oggi: il consumo del giorno corrente, dallo stesso storico del grafico.
+    const og = this._el.querySelector('[data-role="oggi"]');
+    if (og) {
+      const gg = (this._hist && this._hist.daily) || {};
+      const kOggi = this._dkey(new Date());
+      const kwh = gg[kOggi];
+      if (this._cfg.mostra_oggi === false || kwh === undefined) og.hidden = true;
+      else {
+        og.hidden = false;
+        og.innerHTML = `<small>oggi</small> ${this._fmt(kwh)} kWh <span class="eur">${this._fmtE(kwh)}</span>`;
+      }
     }
     const lc = this._el.querySelector('[data-role="lastcycle"]');
     const hist = this._hist;
@@ -1137,6 +1157,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
         <label><input type="checkbox" id="f_mnome"${c.mostra_nome !== false ? " checked" : ""}> Nome</label>
         <label><input type="checkbox" id="f_mstato"${c.mostra_stato !== false ? " checked" : ""}> Riga di stato (Ferma, In funzione…)</label>
         <label><input type="checkbox" id="f_mwatt"${c.mostra_watt !== false ? " checked" : ""}> Watt di adesso</label>
+        <label><input type="checkbox" id="f_moggi"${c.mostra_oggi !== false ? " checked" : ""}> Consumo e costo di oggi</label>
         <label><input type="checkbox" id="f_mciclo"${c.mostra_ultimo_ciclo !== false ? " checked" : ""}> Ultimo ciclo (durata, kWh, costo)</label>
         <label><input type="checkbox" id="f_mstorico"${c.mostra_storico !== false ? " checked" : ""}> Tasto "Storico e costi"</label>
       </div>
@@ -1165,7 +1186,7 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_disegno", "change", e => this._set("disegno", e.target.value));
     on("#f_tstorico", "input", e => this._set("testo_storico", e.target.value));
     [["#f_mnome", "mostra_nome"], ["#f_mstato", "mostra_stato"], ["#f_mwatt", "mostra_watt"],
-     ["#f_mciclo", "mostra_ultimo_ciclo"], ["#f_mstorico", "mostra_storico"]].forEach(([id, k]) =>
+     ["#f_moggi", "mostra_oggi"], ["#f_mciclo", "mostra_ultimo_ciclo"], ["#f_mstorico", "mostra_storico"]].forEach(([id, k]) =>
       on(id, "change", e => this._set(k, e.target.checked)));
     on("#f_days", "change", e => this._set("storico_giorni", parseInt(e.target.value) || 14));
     on("#f_photo", "change", e => this._set("photo_url", e.target.value.trim()));
