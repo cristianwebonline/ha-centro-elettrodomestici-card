@@ -4,7 +4,7 @@
  *  che si usano a sessioni) oppure grafico consumo continuo (per frigo/congelatore,
  *  che girano sempre). Gira nel browser, indipendente dal server esterno.
  */
-const CEC_VERSION = "2.6.0";
+const CEC_VERSION = "2.7.0";
 console.info(`%c CENTRO-ELETTRODOMESTICI-CARD %c v${CEC_VERSION} `,
   "color:#2b1a06;background:#ffb020;font-weight:700;border-radius:4px 0 0 4px",
   "color:#fff0d6;background:#1a1b21;border-radius:0 4px 4px 0");
@@ -812,6 +812,13 @@ class CentroElettrodomesticiCard extends HTMLElement {
       .cec-scrim.on .cec-modal{transform:none}
       .cec-mh{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
       .cec-mt{font-size:17px;font-weight:850}
+      /* I tre tasti in cima alla finestra: grandi abbastanza per un dito. */
+      .cec-azioni{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 12px}
+      .cec-azione{flex:1 1 auto;min-width:104px;min-height:44px;padding:10px 12px;border-radius:13px;
+        border:1px solid var(--cec-stroke);background:rgba(255,255,255,.07);color:var(--cec-ink);
+        font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:filter .15s,transform .1s}
+      .cec-azione:hover{filter:brightness(1.2)}
+      .cec-azione:active{transform:scale(.97)}
       .cec-x{width:30px;height:30px;border-radius:50%;border:1px solid var(--cec-stroke);background:rgba(255,255,255,.05);color:var(--cec-ink);font-size:15px;cursor:pointer;flex:0 0 auto}
       .cec-tabs{display:flex;gap:8px;margin-bottom:12px}
       .cec-tab{flex:1;text-align:center;padding:8px;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;
@@ -983,15 +990,65 @@ class CentroElettrodomesticiCard extends HTMLElement {
     } else lc.hidden = true;
   }
 
+  // LE AZIONI, TUTTE NELLO STESSO POSTO.
+  // Il manuale stava in una tessera a parte che occupava mezza riga della
+  // stanza (Cristian: "mettilo dentro la card forno... cosi e tutto li e non
+  // ingombra"). Da qui si fa tutto: accendere o spegnere, aprire la scheda di
+  // Home Assistant e leggere il libretto.
+  _barraAzioni() {
+    const c = this._cfg;
+    const sw = c.switch && this._hass && this._hass.states[c.switch];
+    const acceso = !!sw && ["on", "home", "open"].includes(sw.state);
+    // Frigorifero e congelatore non si spengono da qui: e la stessa regola
+    // del pallino sulla card, staccarli per sbaglio vuol dire perdere il cibo.
+    const senzaSpegni = ["frigorifero", "congelatore"].includes(c.kind);
+    const b = [];
+    if (sw && !senzaSpegni) {
+      b.push(`<button class="cec-azione" data-az="toggle">${acceso ? "\u23fb Spegni" : "\u23fb Accendi"}</button>`);
+    }
+    b.push(`<button class="cec-azione" data-az="info">\u2139 Informazioni</button>`);
+    if ((c.manuale || "").trim()) {
+      b.push(`<button class="cec-azione" data-az="manuale">\ud83d\udcd8 ${this._esc(c.manuale_nome || "Manuale")}</button>`);
+    }
+    return `<div class="cec-azioni">${b.join("")}</div>`;
+  }
+
+  _wireAzioni(ov) {
+    const c = this._cfg;
+    ov.querySelectorAll("[data-az]").forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const a = b.dataset.az;
+      if (a === "toggle" && c.switch) {
+        this._hass.callService("homeassistant", "toggle", { entity_id: c.switch });
+        const t0 = b.textContent;
+        b.textContent = "Fatto \u2713";
+        setTimeout(() => { b.textContent = t0; }, 1500);
+      } else if (a === "info") {
+        this.dispatchEvent(new CustomEvent("hass-more-info", { bubbles: true, composed: true,
+          detail: { entityId: c.switch || c.power || c.energy } }));
+        ov.classList.remove("on");
+      } else if (a === "manuale") {
+        const u = String(c.manuale || "").trim();
+        if (!u) return;
+        if (u.startsWith("/") && !u.startsWith("/local/") && !u.startsWith("/api/")) {
+          history.pushState(null, "", u);
+          window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, composed: true }));
+        } else window.open(u, "_blank", "noopener");
+      }
+    });
+  }
+
   _openHistory() {
     const hist = this._hist, cfg = this._cfg, continuous = CHART_VIEW[cfg.kind];
     let ov = this.querySelector(".cec-scrim");
     if (!ov) { ov = document.createElement("div"); ov.className = "cec-scrim"; this.querySelector(".cec").appendChild(ov); }
     if (!cfg.energy) {
       ov.innerHTML = `<div class="cec-modal"><div class="cec-mh"><div class="cec-mt">${this._esc(cfg.name)}</div><button class="cec-x">✕</button></div>
+        ${this._barraAzioni()}
         <div class="cec-empty">Configura un sensore di energia (nell'editor della card) per vedere storico e grafico.</div></div>`;
       requestAnimationFrame(() => ov.classList.add("on"));
       ov.querySelector(".cec-x").onclick = () => ov.classList.remove("on");
+      this._wireAzioni(ov);
       ov.onclick = e => { if (e.target === ov) ov.classList.remove("on"); };
       return;
     }
@@ -1032,6 +1089,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
         <div class="cec-mh"><div><div class="cec-mt">${this._esc(cfg.name)}</div>
           <div style="font-size:11.5px;color:var(--cec-muted);margin-top:2px">${this._fmt(totKwh)} kWh negli ultimi ${days} giorni · ${this._fmtE(totKwh)}</div></div>
           <button class="cec-x">✕</button></div>
+        ${this._barraAzioni()}
         <div class="cec-tabs">
           <div class="cec-tab${period === "7" ? " sel" : ""}" data-p="7">7 giorni</div>
           <div class="cec-tab${period === "30" ? " sel" : ""}" data-p="30">30 giorni</div>
@@ -1040,6 +1098,7 @@ class CentroElettrodomesticiCard extends HTMLElement {
         ${bottomHTML}
       </div>`;
       ov.querySelector(".cec-x").onclick = () => ov.classList.remove("on");
+      this._wireAzioni(ov);
       ov.querySelectorAll(".cec-tab").forEach(t => t.onclick = () => { period = t.dataset.p; render(); });
     };
     render();
@@ -1163,6 +1222,12 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
       </div>
       <div class="fld"><label>Scritta del tasto</label>
         <input type="text" id="f_tstorico" placeholder="Storico e costi" value="${(c.testo_storico || "").replace(/"/g, "&quot;")}"></div>
+      <div class="fld"><label>Manuale — opzionale</label>
+        <span class="h">Il libretto dell'apparecchio: compare come tasto dentro la finestra della card.
+        Puo essere un link internet o un file caricato in Home Assistant (/local/forno.pdf).</span>
+        <input type="text" id="f_manuale" placeholder="https://..." value="${(c.manuale || "").replace(/"/g, "&quot;")}"></div>
+      <div class="fld"><label>Scritta del tasto del manuale</label>
+        <input type="text" id="f_manualenome" placeholder="Manuale" value="${(c.manuale_nome || "").replace(/"/g, "&quot;")}"></div>
       <div class="fld"><label>Foto (URL) — opzionale</label>
         <span class="h">Incolla il link di una foto vera del tuo elettrodomestico per usarla al posto del disegno</span>
         <input type="text" id="f_photo" placeholder="https://..." value="${(c.photo_url || "").replace(/"/g, "&quot;")}"></div>
@@ -1184,6 +1249,8 @@ class CentroElettrodomesticiCardEditor extends HTMLElement {
     on("#f_scaldo", "change", e => this._set("soglia_caldo", parseFloat(String(e.target.value).replace(",", ".")) || 26));
     on("#f_price", "change", e => this._set("prezzo_kwh", parseFloat(String(e.target.value).replace(",", ".")) || 0.30));
     on("#f_disegno", "change", e => this._set("disegno", e.target.value));
+    on("#f_manuale", "change", e => this._set("manuale", e.target.value.trim()));
+    on("#f_manualenome", "change", e => this._set("manuale_nome", e.target.value.trim()));
     on("#f_tstorico", "input", e => this._set("testo_storico", e.target.value));
     [["#f_mnome", "mostra_nome"], ["#f_mstato", "mostra_stato"], ["#f_mwatt", "mostra_watt"],
      ["#f_moggi", "mostra_oggi"], ["#f_mciclo", "mostra_ultimo_ciclo"], ["#f_mstorico", "mostra_storico"]].forEach(([id, k]) =>
